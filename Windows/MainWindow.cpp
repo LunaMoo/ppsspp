@@ -26,6 +26,7 @@
 #include "Common/OSVersion.h"
 
 #include <Windowsx.h>
+#include <algorithm>
 #include <shellapi.h>  // For drag/drop functionality
 #include <string>
 #include <dwmapi.h>
@@ -153,6 +154,7 @@ namespace MainWindow {
 	static TouchInputHandler touchHandler;
 
 	static HMENU g_hMenu;
+	static bool g_menuInitialized = false;
 
 	HINSTANCE hInst;
 	static int cursorCounter = 0;
@@ -318,6 +320,58 @@ namespace MainWindow {
 		}
 	}
 
+	static void ApplyBorderlessStyle(HWND hWnd) {
+		LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+		LONG_PTR newStyle = style;
+		if (g_Config.bWindowBorderless) {
+			newStyle &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+		} else {
+			newStyle = (newStyle & ~WS_POPUP) | WS_OVERLAPPEDWINDOW;
+		}
+		if (newStyle != style) {
+			SetWindowLongPtr(hWnd, GWL_STYLE, newStyle);
+		}
+		if (g_Config.bWindowBorderless) {
+			LONG_PTR exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
+			exStyle &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+			SetWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle);
+		}
+	}
+
+	static void ApplyWindowDecorations() {
+		if (g_Config.bFullScreen) {
+			// Fullscreen handles menu and borders by itself, we'll reapply when leaving it.
+			return;
+		}
+
+		if (g_Config.bShowMenuBar && g_hMenu) {
+			if (!g_menuInitialized) {
+				MainMenuInit(hwndMain, g_hMenu);
+				g_menuInitialized = true;
+			}
+			if (GetMenu(hwndMain) != g_hMenu) {
+				SetMenu(hwndMain, g_hMenu);
+			}
+		} else if (!g_Config.bShowMenuBar && GetMenu(hwndMain)) {
+			SetMenu(hwndMain, NULL);
+		}
+
+		ApplyBorderlessStyle(hwndMain);
+
+		if (g_Config.bWindowBorderless) {
+			// Keep the window on the screen.
+			const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+			const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+			g_Config.iWindowWidth = std::clamp(g_Config.iWindowWidth, 64, screenWidth);
+			g_Config.iWindowHeight = std::clamp(g_Config.iWindowHeight, 64, screenHeight);
+			g_Config.iWindowX = std::clamp(g_Config.iWindowX, 0, screenWidth - g_Config.iWindowWidth);
+			g_Config.iWindowY = std::clamp(g_Config.iWindowY, 0, screenHeight - g_Config.iWindowHeight);
+			SetWindowPos(hwndMain, NULL, g_Config.iWindowX, g_Config.iWindowY, g_Config.iWindowWidth, g_Config.iWindowHeight, SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+		} else {
+			SetWindowPos(hwndMain, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+		}
+	}
+
 	void ApplyFullscreenState(HWND hWnd, bool goFullscreen) {
 		GraphicsContext *graphicsContext = PSP_CoreParameter().graphicsContext;
 		// Make sure no rendering is happening during the switch.
@@ -394,6 +448,9 @@ namespace MainWindow {
 			SetWindowPlacement(hWnd, &wp);
 			SetWindowPos(hWnd, NULL, 0, 0, 0, 0,
 				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+			if (g_Config.bWindowBorderless) {
+				ApplyWindowDecorations();
+			}
 		}
 
 		CorrectCursor();
@@ -510,6 +567,10 @@ namespace MainWindow {
 		g_inForcedResize = true;
 
 		g_hMenu = GetMenu(hwndMain);
+		if (!g_hMenu) {
+			// Started with the menu bar hidden. Load it anyway so it can be turned back on without a restart.
+			g_hMenu = LoadMenu(hInstance, MAKEINTRESOURCE(IDR_MENU1));
+		}
 
 		WINDOWPLACEMENT placement{sizeof(WINDOWPLACEMENT)};
 		if ((g_Config.iWindowX == -1 && g_Config.iWindowY == -1) || g_Config.iWindowWidth < 20 || g_Config.iWindowHeight < 20) {
@@ -541,6 +602,10 @@ namespace MainWindow {
 			SetMenu(hwndMain, NULL);
 		} else {
 			MainMenuInit(hwndMain, g_hMenu);
+			g_menuInitialized = true;
+		}
+		if (g_Config.bWindowBorderless) {
+			ApplyWindowDecorations();
 		}
 
 		// Accept dragged files.
@@ -792,7 +857,9 @@ namespace MainWindow {
 				bool portrait = config.InternalRotationIsPortrait();
 				rc.right = portrait ? 272 : 480;
 				rc.bottom = portrait ? 480 : 272;
-				AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+				if (!g_Config.bWindowBorderless) {
+					AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+				}
 				minmax->ptMinTrackSize.x = rc.right - rc.left;
 				minmax->ptMinTrackSize.y = rc.bottom - rc.top;
 				return 0;
@@ -858,6 +925,10 @@ namespace MainWindow {
 
 		case WM_USER_APPLY_FULLSCREEN:
 			ApplyFullscreenState(hwndMain, g_Config.bFullScreen);
+			break;
+
+		case WM_USER_APPLY_WINDOW_DECORATIONS:
+			ApplyWindowDecorations();
 			break;
 
 		case WM_DISPLAYCHANGE:
@@ -1343,6 +1414,10 @@ namespace MainWindow {
 
 	void SendApplyFullscreenState() {
 		PostMessage(hwndMain, WM_USER_APPLY_FULLSCREEN, 0, 0);
+	}
+
+	void SendApplyWindowDecorations() {
+		PostMessage(hwndMain, WM_USER_APPLY_WINDOW_DECORATIONS, 0, 0);
 	}
 
 	void RunCallbackInWndProc(void (*callback)(void *, void *), void *userdata) {

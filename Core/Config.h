@@ -336,6 +336,7 @@ public:
 	int iWindowSizeState;  // WindowSizeState enum
 
 	bool bShowMenuBar;  // Windows-only
+	bool bWindowBorderless;  // Windows-only. Windowed mode without title bar and borders, placed at iWindowX/Y.
 
 	float fUITint;
 	float fUISaturation;

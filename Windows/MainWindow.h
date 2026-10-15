@@ -21,6 +21,7 @@ namespace MainWindow
 		WM_USER_RUN_CALLBACK = WM_USER + 108,
 		WM_USER_DESTROY = WM_USER + 109,
 		WM_USER_SHOW_DISASM = WM_USER + 110,
+		WM_USER_APPLY_WINDOW_DECORATIONS = WM_USER + 111,
 	};
 
 	enum {
@@ -77,6 +78,8 @@ namespace MainWindow
 	void ApplyFullscreenState(HWND hWnd, bool goingFullscreen);
 	void Minimize();
 	void SendApplyFullscreenState();  // To be used off-thread
+	// Applies bShowMenuBar, bWindowBorderless and the configured window position/size (windowed mode only).
+	void SendApplyWindowDecorations();  // To be used off-thread
 	void ToggleDebugConsoleVisibility();
 	void SetInternalResolution(int res = -1);
 	void SetWindowSize(int zoom);

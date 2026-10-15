@@ -1184,6 +1184,32 @@ void OtherSettingsScreen::CreateOtherSettings(UI::LinearLayout *list) {
 
 	CheckBox *unlockScaling = list->Add(new CheckBox(&g_Config.bUnlockCachedScaling, gr->T("Disable texture scaling limiters")));
 	list->Add(new SettingHint(gr->T("UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead."), unlockScaling));
+
+#if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
+	list->Add(new ItemHeader(sy->T("Window")));
+	list->Add(new CheckBox(&g_Config.bShowMenuBar, sy->T("Show Windows menu bar")))->OnClick.Add([](UI::EventParams &) {
+		MainWindow::SendApplyWindowDecorations();
+	});
+	list->Add(new CheckBox(&g_Config.bWindowBorderless, sy->T("Borderless window")))->OnClick.Add([this](UI::EventParams &) {
+		MainWindow::SendApplyWindowDecorations();
+		RecreateViews();
+	});
+	if (g_Config.bWindowBorderless) {
+		const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+		const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+		auto applyWindow = [](UI::EventParams &) {
+			MainWindow::SendApplyWindowDecorations();
+		};
+		PopupSliderChoice *windowX = list->Add(new PopupSliderChoice(&g_Config.iWindowX, 0, screenWidth, UI::NO_DEFAULT_INT, sy->T("Window X position"), 1, screenManager(), "px"));
+		windowX->OnChange.Add(applyWindow);
+		PopupSliderChoice *windowY = list->Add(new PopupSliderChoice(&g_Config.iWindowY, 0, screenHeight, UI::NO_DEFAULT_INT, sy->T("Window Y position"), 1, screenManager(), "px"));
+		windowY->OnChange.Add(applyWindow);
+		PopupSliderChoice *windowW = list->Add(new PopupSliderChoice(&g_Config.iWindowWidth, 64, screenWidth, UI::NO_DEFAULT_INT, sy->T("Window width"), 1, screenManager(), "px"));
+		windowW->OnChange.Add(applyWindow);
+		PopupSliderChoice *windowH = list->Add(new PopupSliderChoice(&g_Config.iWindowHeight, 64, screenHeight, UI::NO_DEFAULT_INT, sy->T("Window height"), 1, screenManager(), "px"));
+		windowH->OnChange.Add(applyWindow);
+	}
+#endif
 }
 
 void OtherSettingsScreen::onFinish(DialogResult result) {

@@ -380,6 +380,7 @@ static const ConfigSetting generalSettings[] = {
 
 	ConfigSetting("FullscreenOnDoubleclick", SETTING(g_Config, bFullscreenOnDoubleclick), true, CfgFlag::DONT_SAVE),
 	ConfigSetting("ShowMenuBar", SETTING(g_Config, bShowMenuBar), true, CfgFlag::DEFAULT),
+	ConfigSetting("WindowBorderless", SETTING(g_Config, bWindowBorderless), false, CfgFlag::DEFAULT),
 
 	ConfigSetting("MemStickInserted", SETTING(g_Config, bMemStickInserted), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("LoadPlugins", SETTING(g_Config, bLoadPlugins), true, CfgFlag::PER_GAME),
