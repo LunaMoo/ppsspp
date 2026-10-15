@@ -773,7 +773,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("UnlockCachedScaling", SETTING(g_Config, bUnlockCachedScaling), false, CfgFlag::DEFAULT),
 	ConfigSetting("VerticalSync", SETTING(g_Config, bVSync), true, CfgFlag::PER_GAME),
 	ConfigSetting("LowLatencyPresent", SETTING(g_Config, bLowLatencyPresent), false, CfgFlag::PER_GAME),
-	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 2, CfgFlag::PER_GAME | CfgFlag::REPORT),
 
 	// Not really a graphics setting...
 	ConfigSetting("SplineBezierQuality", SETTING(g_Config, iSplineBezierQuality), 2, CfgFlag::PER_GAME | CfgFlag::REPORT),
