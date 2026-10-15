@@ -920,7 +920,6 @@ static int DefaultAnalogAltSpeedPercent() {
 
 static constexpr const char *externalDisplayNames[] = { "Show the game", "Mirror the screen" };
 static constexpr const char *gpuBackendNames[] = { "OpenGL", "Direct3D 9", "Direct3D 11", "Vulkan", "Metal" };
-static constexpr const char *internalResolutionNames[] = { "Auto (1:1)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
 static constexpr const char *msaaLevelNames[] = { "Off", "2x", "4x", "8x", "16x" };
 static constexpr const char *androidHwScaleNames[] = { "Native device resolution", "Same as Rendering resolution", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP" };
 static constexpr const char *frameSkipNames[] = { "Off", "1", "2", "3", "4" };
@@ -983,7 +982,7 @@ static constexpr ConfigSetting graphicsSettings[] = {
 	ConfigSetting("Smart2DTexFiltering", SETTING(g_Config, bSmart2DTexFiltering), false, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::GRAPHICS, "Smart 2D texture filtering"),
 	ConfigSetting("InternalResolution", SETTING(g_Config, iInternalResolution), &DefaultInternalResolution, CfgFlag::PER_GAME | CfgFlag::REPORT)
-		.Label(I18NCat::GRAPHICS, "Rendering Resolution").Choices(internalResolutionNames).OnChanged(&OnInternalResolutionChanged),
+		.Label(I18NCat::GRAPHICS, "Rendering Resolution").Range(0, 32, 1).ZeroLabel("Auto (1:1)").OnChanged(&OnInternalResolutionChanged),
 	ConfigSetting("AndroidHwScale", SETTING(g_Config, iAndroidHwScale), 0, CfgFlag::DEFAULT)
 		.Label(I18NCat::GRAPHICS, "Display Resolution (HW scaler)").Choices(androidHwScaleNames).OnChanged(&OnAndroidHwScaleChanged),
 	ConfigSetting("HighQualityDepth", SETTING(g_Config, bHighQualityDepth), true, CfgFlag::PER_GAME | CfgFlag::REPORT),

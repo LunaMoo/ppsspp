@@ -213,7 +213,7 @@ void BuildGraphicsSettings(SettingsPage *page) {
 		}
 	}
 
-	page->Setting(&g_Config.iInternalResolution).EnabledFunc([] {
+	page->Setting(&g_Config.iInternalResolution).Format("%dx PSP").EnabledFunc([] {
 		return !g_Config.bSoftwareRendering && !g_Config.bSkipBufferEffects;
 	});
 
