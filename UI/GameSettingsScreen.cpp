@@ -310,9 +310,10 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		}
 	}
 
-	static const char *internalResolutions[] = { "Auto (1:1)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
-	PopupMultiChoice *resolutionChoice = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iInternalResolution, gr->T("Rendering Resolution"), internalResolutions, 0, ARRAY_SIZE(internalResolutions), I18NCat::GRAPHICS, screenManager()));
-	resolutionChoice->OnChoice.Add([](UI::EventParams &e) {
+	PopupSliderChoice *resolutionChoice = graphicsSettings->Add(new PopupSliderChoice(&g_Config.iInternalResolution, 0, 32, UI::NO_DEFAULT_INT, gr->T("Rendering Resolution"), 1, screenManager(), gr->T("* PSP res, 0:Auto")));
+	resolutionChoice->SetFormat("%ix PSP");
+	resolutionChoice->SetZeroLabel(gr->T("Auto (1:1)"));
+	resolutionChoice->OnChange.Add([](UI::EventParams &e) {
 		if (g_Config.iAndroidHwScale == 1) {
 			System_RecreateActivity();
 		}

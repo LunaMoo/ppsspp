@@ -652,7 +652,8 @@ namespace MainWindow {
 		case ID_OPTIONS_SCREEN7X:   SetInternalResolution(RESOLUTION_7X); break;
 		case ID_OPTIONS_SCREEN8X:   SetInternalResolution(RESOLUTION_8X); break;
 		case ID_OPTIONS_SCREEN9X:   SetInternalResolution(RESOLUTION_9X); break;
-		case ID_OPTIONS_SCREEN10X:   SetInternalResolution(RESOLUTION_MAX); break;
+		case ID_OPTIONS_SCREEN10X:   SetInternalResolution(RESOLUTION_10X); break;
+		case ID_OPTIONS_SCREENMAX:   SetInternalResolution(RESOLUTION_MAX); break;
 
 		case ID_OPTIONS_WINDOW1X:   SetWindowSize(1); break;
 		case ID_OPTIONS_WINDOW2X:   SetWindowSize(2); break;
@@ -1106,6 +1107,7 @@ namespace MainWindow {
 		for (int i = 0; i < ARRAY_SIZE(zoomitems); i++) {
 			CheckMenuItem(menu, zoomitems[i], MF_BYCOMMAND | ((i == g_Config.iInternalResolution) ? MF_CHECKED : MF_UNCHECKED));
 		}
+		CheckMenuItem(menu, ID_OPTIONS_SCREENMAX, MF_BYCOMMAND | ((g_Config.iInternalResolution == RESOLUTION_MAX) ? MF_CHECKED : MF_UNCHECKED));
 
 		static const int windowSizeItems[10] = {
 			ID_OPTIONS_WINDOW1X,

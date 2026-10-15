@@ -262,7 +262,8 @@ namespace MainWindow {
 		if (res >= 0 && res <= RESOLUTION_MAX)
 			g_Config.iInternalResolution = res;
 		else {
-			if (++g_Config.iInternalResolution > RESOLUTION_MAX)
+			// Hotkey cycling stops at 10x, higher values are only reachable through the menu or settings.
+			if (++g_Config.iInternalResolution > RESOLUTION_10X)
 				g_Config.iInternalResolution = 0;
 		}
 

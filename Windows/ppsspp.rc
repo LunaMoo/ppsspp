@@ -601,6 +601,7 @@ BEGIN
             MENUITEM "&8x",                                 ID_OPTIONS_SCREEN8X
             MENUITEM "&9x",                                 ID_OPTIONS_SCREEN9X
             MENUITEM "&10x",                                ID_OPTIONS_SCREEN10X
+            MENUITEM "&Max (32x)",                          ID_OPTIONS_SCREENMAX
         END
         POPUP "Window Size",                                ID_OPTIONS_WINDOW_MENU
         BEGIN

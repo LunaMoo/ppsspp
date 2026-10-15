@@ -354,6 +354,7 @@
 #define ID_OPTIONS_BUFFEREDRENDERINGDUMMY 40500
 #define IDC_STEPOUT                       40501
 #define ID_HELP_BUYGOLD                   40502
+#define ID_OPTIONS_SCREENMAX              40503
 
 #define IDC_STATIC                      -1
 
