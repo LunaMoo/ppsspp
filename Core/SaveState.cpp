@@ -385,8 +385,8 @@ int g_screenshotFailures;
 			g_screenshotFailures = 0;
 		}
 
-		// Savestate thumbnails don't need to be bigger.
-		constexpr int maxResMultiplier = 2;
+		// Savestate thumbnails don't need to be bigger, unless the user wants them full size (-1 = no limit).
+		const int maxResMultiplier = g_Config.bSavestateScreenshotResLimit ? 2 : -1;
 		ScheduleScreenshot(path, ScreenshotFormat::JPG, ScreenshotType::Display, maxResMultiplier, [path](ScreenshotResult result) {
 			switch (result) {
 			case ScreenshotResult::ScreenshotNotPossible:

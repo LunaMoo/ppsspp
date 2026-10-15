@@ -390,6 +390,7 @@ public:
 	bool bUberShaderVertex;
 	int iDefaultTab;
 	int iScreenshotMode;
+	bool bSavestateScreenshotResLimit;  // Limits savestate thumbnails to 2x PSP resolution.
 	bool bVulkanDisableImplicitLayers;
 	bool bForceFfmpegForAudioDec;
 

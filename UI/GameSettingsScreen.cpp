@@ -1185,6 +1185,8 @@ void OtherSettingsScreen::CreateOtherSettings(UI::LinearLayout *list) {
 	CheckBox *unlockScaling = list->Add(new CheckBox(&g_Config.bUnlockCachedScaling, gr->T("Disable texture scaling limiters")));
 	list->Add(new SettingHint(gr->T("UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead."), unlockScaling));
 
+	list->Add(new CheckBox(&g_Config.bSavestateScreenshotResLimit, sy->T("Limit resolution of savestate screenshots")));
+
 #if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 	list->Add(new ItemHeader(sy->T("Window")));
 	list->Add(new CheckBox(&g_Config.bShowMenuBar, sy->T("Show Windows menu bar")))->OnClick.Add([](UI::EventParams &) {
