@@ -124,7 +124,7 @@ void Discord::SetPresenceGame(std::string_view gameTitle) {
 	discordPresence.details = sc->T_cstr("Playing");
 	discordPresence.startTimestamp = time(0);
 	discordPresence.largeImageText = "PPSSPP is the best PlayStation Portable emulator around!";
-	discordPresence.largeImageKey = System_GetPropertyBool(SYSPROP_APP_GOLD) ? "icon_gold_png" : "icon_regular_png";
+	discordPresence.largeImageKey = "icon_luna_png";
 	Discord_UpdatePresence(&discordPresence);
 #endif
 }
@@ -145,7 +145,7 @@ void Discord::SetPresenceMenu() {
 	discordPresence.details = "";
 	discordPresence.startTimestamp = time(0);
 	discordPresence.largeImageText = "PPSSPP is the best PlayStation Portable emulator around!";
-	discordPresence.largeImageKey = System_GetPropertyBool(SYSPROP_APP_GOLD) ? "icon_gold_png" : "icon_regular_png";
+	discordPresence.largeImageKey = "icon_luna_png";
 	Discord_UpdatePresence(&discordPresence);
 #endif
 }
