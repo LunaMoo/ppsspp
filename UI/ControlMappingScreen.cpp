@@ -429,7 +429,12 @@ void KeyMappingNewKeyDialog::axis(const AxisInput &axis) {
 	if (ignoreInput_)
 		return;
 
-	if (axis.value > AXIS_BIND_THRESHOLD) {
+	// Configurable for gamepad axes (not the mouse, see KeyMappingNewMouseKeyDialog).
+	// The release threshold has to stay below the bind threshold for the hysteresis to work.
+	const float bindThreshold = std::clamp(g_Config.fAxisBindThreshold, 0.05f, 0.95f);
+	const float releaseThreshold = std::min(AXIS_BIND_RELEASE_THRESHOLD, bindThreshold * 0.5f);
+
+	if (axis.value > bindThreshold) {
 		InputMapping mapping(axis.deviceId, axis.axisId, 1);
 		triggeredAxes_.insert(mapping);
 		if (!g_Config.bAllowMappingCombos && !mapping_.mappings.empty()) {
@@ -439,7 +444,7 @@ void KeyMappingNewKeyDialog::axis(const AxisInput &axis) {
 			mapping_.mappings.push_back(mapping);
 			RecreateViews();
 		}
-	} else if (axis.value < -AXIS_BIND_THRESHOLD) {
+	} else if (axis.value < -bindThreshold) {
 		InputMapping mapping(axis.deviceId, axis.axisId, -1);
 		triggeredAxes_.insert(mapping);
 		if (!g_Config.bAllowMappingCombos && !mapping_.mappings.empty()) {
@@ -449,7 +454,7 @@ void KeyMappingNewKeyDialog::axis(const AxisInput &axis) {
 			mapping_.mappings.push_back(mapping);
 			RecreateViews();
 		}
-	} else if (fabsf(axis.value) < AXIS_BIND_RELEASE_THRESHOLD) {
+	} else if (fabsf(axis.value) < releaseThreshold) {
 		InputMapping neg(axis.deviceId, axis.axisId, -1);
 		InputMapping pos(axis.deviceId, axis.axisId, 1);
 		if (triggeredAxes_.find(neg) != triggeredAxes_.end() || triggeredAxes_.find(pos) != triggeredAxes_.end()) {

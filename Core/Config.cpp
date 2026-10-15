@@ -1045,6 +1045,7 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("AnalogLimiterDeadzone", SETTING(g_Config, fAnalogLimiterDeadzone), 0.6f, CfgFlag::DEFAULT),
 	ConfigSetting("AnalogTriggerThreshold", SETTING(g_Config, fAnalogTriggerThreshold), 0.75f, CfgFlag::DEFAULT),
 	ConfigSetting("AnalogStickThreshold", SETTING(g_Config, fAnalogStickThreshold), 0.75f, CfgFlag::DEFAULT),
+	ConfigSetting("AxisBindThreshold", SETTING(g_Config, fAxisBindThreshold), 0.25f, CfgFlag::DEFAULT),
 
 	ConfigSetting("AllowMappingCombos", SETTING(g_Config, bAllowMappingCombos), false, CfgFlag::DEFAULT),
 	ConfigSetting("StrictComboOrder", SETTING(g_Config, bStrictComboOrder), false, CfgFlag::DEFAULT),

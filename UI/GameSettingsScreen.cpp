@@ -839,6 +839,8 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 	controlsSettings->Add(new ItemHeader(co->T("Analog to digital mapping")));
 	controlsSettings->Add(new PopupSliderChoiceFloat(&g_Config.fAnalogTriggerThreshold, 0.02f, 0.98f, 0.75f, co->T("Analog trigger threshold"), screenManager()));
 	controlsSettings->Add(new PopupSliderChoiceFloat(&g_Config.fAnalogStickThreshold, 0.2f, 0.98f, 0.75f, co->T("Analog stick threshold"), screenManager()));
+	PopupSliderChoiceFloat *axisBindThreshold = controlsSettings->Add(new PopupSliderChoiceFloat(&g_Config.fAxisBindThreshold, 0.05f, 0.95f, 0.25f, co->T("Axis to button threshold"), 0.05f, screenManager()));
+	controlsSettings->Add(new SettingHint(co->T("AxisToButton Tip", "How far an analog stick or trigger has to be moved to be picked up while mapping it in Control Mapping"), axisBindThreshold));
 
 	// TVs don't have touch control, at least not yet.
 	if ((deviceType != DEVICE_TYPE_TV) && (deviceType != DEVICE_TYPE_VR)) {

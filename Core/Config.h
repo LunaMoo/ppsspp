@@ -558,6 +558,8 @@ public:
 	// Thresholds for triggers and stick when mapped to digital button inputs.
 	float fAnalogTriggerThreshold;
 	float fAnalogStickThreshold;
+	// How far an axis has to move to be picked up while binding it in the control mapping dialog.
+	float fAxisBindThreshold;
 
 	// Sets whether combo mapping is enabled.
 	bool bAllowMappingCombos;
