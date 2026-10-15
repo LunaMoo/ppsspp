@@ -930,7 +930,7 @@ static constexpr const char *bloomHackNames[] = { "Off", "Safe", "Balanced", "Ag
 static constexpr const char *inflightFramesNames[] = { "No buffer", "Up to 1", "Up to 2" };
 static constexpr const char *texScalingTypeNames[] = { "xBRZ", "Hybrid", "Bicubic", "Hybrid + Bicubic" };
 #ifndef MOBILE_DEVICE
-static constexpr const char *texScalingLevelNames[] = { "Off", "2x", "3x", "4x", "5x" };
+static constexpr const char *texScalingLevelNames[] = { "Off", "2x", "3x", "4x", "5x", "6x" };
 #else
 static constexpr const char *texScalingLevelNames[] = { "Off", "2x", "3x" };
 #endif
