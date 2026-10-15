@@ -1055,7 +1055,7 @@ static constexpr ConfigSetting graphicsSettings[] = {
 		.Label(I18NCat::GRAPHICS, "VSync"),
 	ConfigSetting("LowLatencyPresent", SETTING(g_Config, bLowLatencyPresent), false, CfgFlag::PER_GAME)
 		.Label(I18NCat::GRAPHICS, "Low latency display"),
-	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 0, CfgFlag::PER_GAME | CfgFlag::REPORT)
+	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 2, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::GRAPHICS, "Lower resolution for effects").Choices(bloomHackNames),
 
 	ConfigSetting("TextureShader", SETTING(g_Config, sTextureShaderName), "Off", CfgFlag::PER_GAME),
