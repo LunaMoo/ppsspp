@@ -48,6 +48,10 @@ private:
 	uint32_t ctxPtr = 0xFFFFFFFF;
 };
 
+// User adjustable volume (g_Config.iAtracMp3Volume) for decoded ATRAC/MP3/AAC audio. 1.0f = unchanged.
+float DecodedAudioVolumeMultiplier();
+void ApplyDecodedAudioVolume(int16_t *samples, int count);
+
 void AudioClose(AudioDecoder **ctx);
 const char *GetCodecName(int codec);  // audioType
 bool IsValidCodec(PSPAudioType codec);

@@ -425,6 +425,10 @@ public:
 	// Newer volume settings, 0-100
 	int iGameVolume;
 	int iReverbVolume;
+	// Separate volumes for the two main sources of game audio: SAS (sound effects, sequenced music)
+	// and decoded ATRAC/MP3/AAC streams (most music, voices, video audio). 100 = unchanged.
+	int iSASVolume;
+	int iAtracMp3Volume;
 	int iUIVolume;
 	int iGamePreviewVolume;  // Volume for the game preview sound in the game grid.
 	int iAchievementVolume;

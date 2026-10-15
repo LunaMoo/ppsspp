@@ -25,6 +25,7 @@
 #include "Core/HW/MediaEngine.h"
 #include "Core/HW/BufferQueue.h"
 #include "Core/HW/Atrac3Standalone.h"
+#include "Core/Config.h"
 
 #ifdef USE_FFMPEG
 
@@ -245,6 +246,23 @@ FFmpegAudioDecoder::~FFmpegAudioDecoder() {
 }
 
 // Decodes a single input frame.
+float DecodedAudioVolumeMultiplier() {
+	if (g_Config.iAtracMp3Volume == VOLUMEHI_FULL) {
+		return 1.0f;
+	}
+	return Volume100ToMultiplier(std::max(0, g_Config.iAtracMp3Volume));
+}
+
+void ApplyDecodedAudioVolume(int16_t *samples, int count) {
+	const float multiplier = DecodedAudioVolumeMultiplier();
+	if (multiplier == 1.0f || !samples) {
+		return;
+	}
+	for (int i = 0; i < count; i++) {
+		samples[i] = (int16_t)std::clamp((int)(samples[i] * multiplier), -32768, 32767);
+	}
+}
+
 bool FFmpegAudioDecoder::Decode(const uint8_t *inbuf, int inbytes, int *inbytesConsumed, int outputChannels, int16_t *outbuf, int *outSamples) {
 #ifdef USE_FFMPEG
 	if (!codecOpen_) {
@@ -363,6 +381,10 @@ bool FFmpegAudioDecoder::Decode(const uint8_t *inbuf, int inbytes, int *inbytesC
 		if (swrRet < 0) {
 			ERROR_LOG(Log::ME, "swr_convert: Error while converting: %d", swrRet);
 			return false;
+		}
+		if (swrRet > 0) {
+			// We always convert to stereo.
+			ApplyDecodedAudioVolume(outbuf, swrRet * 2);
 		}
 		// output stereo samples per frame
 		if (outSamples) {

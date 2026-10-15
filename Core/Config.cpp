@@ -855,6 +855,8 @@ static const ConfigSetting soundSettings[] = {
 	ConfigSetting("GameVolume", SETTING(g_Config, iGameVolume), &DefaultGameVolume, CfgFlag::PER_GAME),
 	ConfigSetting("ReverbRelativeVolume", SETTING(g_Config, iReverbVolume), &DefaultReverbVolume, CfgFlag::PER_GAME),
 	ConfigSetting("AltSpeedRelativeVolume", SETTING(g_Config, iAltSpeedVolume), VOLUMEHI_FULL, CfgFlag::PER_GAME),
+	ConfigSetting("SASRelativeVolume", SETTING(g_Config, iSASVolume), VOLUMEHI_FULL, CfgFlag::PER_GAME),
+	ConfigSetting("AtracMp3RelativeVolume", SETTING(g_Config, iAtracMp3Volume), VOLUMEHI_FULL, CfgFlag::PER_GAME),
 	ConfigSetting("AchievementVolume", SETTING(g_Config, iAchievementVolume), &DefaultAchievementVolume, CfgFlag::PER_GAME),
 	ConfigSetting("UIVolume", SETTING(g_Config, iUIVolume), 75, CfgFlag::DEFAULT),
 	ConfigSetting("GamePreviewVolume", SETTING(g_Config, iGamePreviewVolume), &DefaultGamePreviewVolume, CfgFlag::DEFAULT),

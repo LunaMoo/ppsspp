@@ -126,17 +126,18 @@ public:
 			if (outbuf) {
 				_dbg_assert_(outputChannels == 1 || outputChannels == 2);
 				const float *left = buffers_[0];
+				const float volume = DecodedAudioVolumeMultiplier();
 				if (outputChannels == 2) {
 					// Stereo output, standard.
 					const float *right = channels_ == 2 ? buffers_[1] : buffers_[0];
 					for (int i = 0; i < nb_samples; i++) {
-						outbuf[i * 2] = clamp16(left[i]);
-						outbuf[i * 2 + 1] = clamp16(right[i]);
+						outbuf[i * 2] = clamp16(left[i] * volume);
+						outbuf[i * 2 + 1] = clamp16(right[i] * volume);
 					}
 				} else {
 					// Mono output, just take the left channel.
 					for (int i = 0; i < nb_samples; i++) {
-						outbuf[i] = clamp16(left[i]);
+						outbuf[i] = clamp16(left[i] * volume);
 					}
 				}
 			}

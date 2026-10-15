@@ -23,6 +23,7 @@
 #include "Core/MemMapHelpers.h"
 #include "Core/HLE/sceAtrac.h"
 #include "Core/HLE/scePower.h"
+#include "Core/Config.h"
 #include "Core/Reporting.h"
 #include "Core/Util/AudioFormat.h"
 #include "Core/System.h"
@@ -601,6 +602,18 @@ void SasInstance::MixVoice(SasVoice &voice) {
 		}
 
 		const bool needsInterp = voicePitch != PSP_SAS_PITCH_BASE || (sampleFrac & PSP_SAS_PITCH_MASK) != 0;
+		// User adjustable SAS volume, in 1.12 fixed point like the voice volumes.
+		int volumeLeft = voice.volumeLeft;
+		int volumeRight = voice.volumeRight;
+		int effectLeft = voice.effectLeft;
+		int effectRight = voice.effectRight;
+		if (g_Config.iSASVolume != VOLUMEHI_FULL) {
+			const int sasVolume = (int)(Volume100ToMultiplier(std::max(0, g_Config.iSASVolume)) * 4096.0f);
+			volumeLeft = (volumeLeft * sasVolume) >> 12;
+			volumeRight = (volumeRight * sasVolume) >> 12;
+			effectLeft = (effectLeft * sasVolume) >> 12;
+			effectRight = (effectRight * sasVolume) >> 12;
+		}
 		for (int i = delay; i < grainSize; i++) {
 			const int16_t *s = mixTemp_ + (sampleFrac >> PSP_SAS_PITCH_BASE_SHIFT);
 
@@ -625,10 +638,10 @@ void SasInstance::MixVoice(SasVoice &voice) {
 			// We mix into this 32-bit temp buffer and clip in a second loop
 			// Ideally, the shift right should be there too but for now I'm concerned about
 			// not overflowing.
-			mixBuffer[i * 2] += (sample * voice.volumeLeft) >> 12;
-			mixBuffer[i * 2 + 1] += (sample * voice.volumeRight) >> 12;
-			sendBuffer[i * 2] += sample * voice.effectLeft >> 12;
-			sendBuffer[i * 2 + 1] += sample * voice.effectRight >> 12;
+			mixBuffer[i * 2] += (sample * volumeLeft) >> 12;
+			mixBuffer[i * 2 + 1] += (sample * volumeRight) >> 12;
+			sendBuffer[i * 2] += sample * effectLeft >> 12;
+			sendBuffer[i * 2 + 1] += sample * effectRight >> 12;
 		}
 
 		voice.resampleHist[0] = mixTemp_[tempPos - 2];

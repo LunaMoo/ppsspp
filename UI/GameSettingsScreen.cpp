@@ -657,6 +657,18 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 	reverbVolume->SetEnabledPtr(&g_Config.bEnableSound);
 	reverbVolume->SetZeroLabel(a->T("Disabled"));
 
+	PopupSliderChoice *sasVolume = audioSettings->Add(new PopupSliderChoice(&g_Config.iSASVolume, VOLUME_OFF, VOLUMEHI_FULL, Config::GetDefaultValueInt(&g_Config.iSASVolume), a->T("SAS volume"), screenManager()));
+	sasVolume->SetFormat("%d%%");
+	sasVolume->SetEnabledPtr(&g_Config.bEnableSound);
+	sasVolume->SetZeroLabel(a->T("Mute"));
+	audioSettings->Add(new SettingHint(a->T("SAS volume Tip", "Sound effects and sequenced music"), sasVolume));
+
+	PopupSliderChoice *atracMp3Volume = audioSettings->Add(new PopupSliderChoice(&g_Config.iAtracMp3Volume, VOLUME_OFF, VOLUMEHI_FULL, Config::GetDefaultValueInt(&g_Config.iAtracMp3Volume), a->T("ATRAC / MP3 volume"), screenManager()));
+	atracMp3Volume->SetFormat("%d%%");
+	atracMp3Volume->SetEnabledPtr(&g_Config.bEnableSound);
+	atracMp3Volume->SetZeroLabel(a->T("Mute"));
+	audioSettings->Add(new SettingHint(a->T("ATRAC / MP3 volume Tip", "Most music, voices and video audio"), atracMp3Volume));
+
 	PopupSliderChoice *altVolume = audioSettings->Add(new PopupSliderChoice(&g_Config.iAltSpeedVolume, VOLUME_OFF, VOLUMEHI_FULL, Config::GetDefaultValueInt(&g_Config.iAltSpeedVolume), a->T("Alternate speed volume"), screenManager()));
 	altVolume->SetFormat("%d%%");
 	altVolume->SetEnabledPtr(&g_Config.bEnableSound);
