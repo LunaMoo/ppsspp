@@ -1406,6 +1406,8 @@ static constexpr ConfigSetting controlSettings[] = {
 		.Label(I18NCat::CONTROLS, "Analog trigger threshold").Range(0.02f, 0.98f, 1.0f),
 	ConfigSetting("AnalogStickThreshold", SETTING(g_Config, fAnalogStickThreshold), 0.75f, CfgFlag::DEFAULT)
 		.Label(I18NCat::CONTROLS, "Analog stick threshold").Range(0.2f, 0.98f, 1.0f),
+	ConfigSetting("AxisBindThreshold", SETTING(g_Config, fAxisBindThreshold), 0.25f, CfgFlag::DEFAULT)
+		.Label(I18NCat::CONTROLS, "Axis to button threshold").Range(0.05f, 0.95f, 0.05f),
 
 	ConfigSetting("AllowMappingCombos", SETTING(g_Config, bAllowMappingCombos), false, CfgFlag::DEFAULT),
 	ConfigSetting("StrictComboOrder", SETTING(g_Config, bStrictComboOrder), false, CfgFlag::DEFAULT),

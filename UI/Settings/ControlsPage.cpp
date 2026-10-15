@@ -78,6 +78,7 @@ void BuildControlsSettings(SettingsPage *page) {
 	page->Header("Analog to digital mapping");
 	page->Setting(&g_Config.fAnalogTriggerThreshold);
 	page->Setting(&g_Config.fAnalogStickThreshold);
+	page->Setting(&g_Config.fAxisBindThreshold).Hint({ I18NCat::CONTROLS, "AxisToButton Tip", "How far an analog stick or trigger has to be moved to be picked up while mapping it in Control Mapping" });
 
 	// TVs don't have touch control, at least not yet.
 	if ((deviceType != DEVICE_TYPE_TV) && (deviceType != DEVICE_TYPE_VR)) {
