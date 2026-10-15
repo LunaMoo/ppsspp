@@ -396,6 +396,8 @@ static constexpr ConfigSetting generalSettings[] = {
 
 	ConfigSetting("ScreenshotMode", SETTING(g_Config, iScreenshotMode), 0, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "Screenshot mode").Choices(screenshotModeNames),
+	ConfigSetting("SavestateScreenshotResLimit", SETTING(g_Config, bSavestateScreenshotResLimit), true, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Limit resolution of savestate screenshots"),
 	ConfigSetting("ScreenshotsAsPNG", SETTING(g_Config, bScreenshotsAsPNG), false, CfgFlag::PER_GAME)
 		.Label(I18NCat::SYSTEM, "Screenshots as PNG"),
 	ConfigSetting("DumpFrames", SETTING(g_Config, bDumpFrames), false, CfgFlag::DEFAULT)

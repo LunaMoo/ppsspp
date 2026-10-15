@@ -41,6 +41,8 @@ static void BuildOtherSettingsPage(SettingsPage *page) {
 		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 	}).Hint({ I18NCat::GRAPHICS, "UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead." });
 
+	page->Setting(&g_Config.bSavestateScreenshotResLimit);
+
 #if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 	SettingsPageHost *host = page->Host();
 	page->Header({ I18NCat::SYSTEM, "Window" });
