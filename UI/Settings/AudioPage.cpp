@@ -160,8 +160,6 @@ void BuildAudioSettings(SettingsPage *page) {
 	}
 
 #if PPSSPP_PLATFORM(ANDROID)
-	page->Setting(&g_Config.bExtraAudioBuffering);
-
 	auto restartAudio = [](UI::EventParams &) {
 		AndroidAudio_Restart(g_audioState);
 	};
@@ -180,6 +178,9 @@ void BuildAudioSettings(SettingsPage *page) {
 	}
 #endif
 #endif
+
+	// Shown on all platforms, the larger buffer is applied by StereoResampler everywhere.
+	page->Setting(&g_Config.bExtraAudioBuffering).Enabled(&g_Config.bEnableSound);
 
 	std::vector<std::string> micList = Microphone::getDeviceList();
 	if (!micList.empty()) {
