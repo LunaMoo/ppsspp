@@ -257,6 +257,8 @@ public:
 				versionString = versionString.substr(0, std::min(cutPos, versionString.size()));
 			}
 		}
+		// Display only, PPSSPP_GIT_VERSION itself stays untouched (used for update checks etc).
+		versionString = "Luna " + versionString;
 		dc.Flush();
 
 		const bool tiny = versionString.size() > 10;
@@ -289,7 +291,7 @@ public:
 
 private:
 	ImageID GetIconID() const {
-		return System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICON_GOLD") : ImageID("I_ICON");
+		return System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICON_GOLD") : ImageID("I_ICON_LUNA");
 	}
 
 	const bool portrait_;

@@ -115,7 +115,8 @@ android {
 	}
 
 	defaultConfig {
-		applicationId = "org.ppsspp.ppsspp"
+		// Luna: separate application id, so it can be installed next to the official PPSSPP.
+		applicationId = "org.ppsspp.ppssppluna"
 		// Access the git version info via the extension
 		if (gitVersionName != "unknown") {
 			println("INFO: Overriding Android Version Name, Code: $gitVersionName $gitVersionCode")
@@ -190,7 +191,7 @@ android {
 	productFlavors {
 		create("normal") {
 			isDefault = true
-			applicationId = "org.ppsspp.ppsspp"
+			applicationId = "org.ppsspp.ppssppluna"
 			dimension = "variant"
 			externalNativeBuild {
 				cmake {

@@ -80,6 +80,7 @@ static const ImageMeta g_uiImageIDs[] = {
 	{"I_LOGO", false},
 	{"I_ICON", false},
 	{"I_ICON_GOLD", false},
+	{"I_ICON_LUNA", false},
 	{"I_FOLDER", false},
 	{"I_UP_DIRECTORY", false},
 	{"I_GEAR", false},

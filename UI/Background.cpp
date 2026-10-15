@@ -273,7 +273,7 @@ public:
 		// Draw the image.
 		float xpos = xbase + dc.GetBounds().x;
 		float ypos = ybase + dc.GetBounds().y;
-		ImageID icon = !color_ix && System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICON_GOLD") : ImageID("I_ICON");
+		ImageID icon = !color_ix && System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICON_GOLD") : ImageID("I_ICON_LUNA");
 		ui_draw2d.DrawImage(icon, xpos, ypos, scale, COLORS[color_ix], ALIGN_CENTER);
 		dc.Flush();
 

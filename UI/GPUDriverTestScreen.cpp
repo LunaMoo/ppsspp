@@ -620,7 +620,7 @@ void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
 	dc.BeginPipeline(flatShadingPipeline_, samplerNearest_);
 	// There is a "provoking vertex" difference here between GL and Vulkan when using flat shading. One gets one color, one gets the other.
 	// However, we now use the VK_EXT_provoking_vertex extension to make it match up (and match with the PSP).
-	dc.DrawImageVGradient(ImageID("I_ICON"), 0xFFFFFFFF, 0xFF808080, bounds);
+	dc.DrawImageVGradient(ImageID("I_ICON_LUNA"), 0xFFFFFFFF, 0xFF808080, bounds);
 	dc.Flush();
 
 	y += 120;
