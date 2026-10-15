@@ -355,6 +355,7 @@
 #define IDC_STEPOUT                       40501
 #define ID_HELP_BUYGOLD                   40502
 #define ID_OPTIONS_SCREENMAX              40503
+#define ID_TEXTURESCALING_6X              40504
 
 #define IDC_STATIC                      -1
 
