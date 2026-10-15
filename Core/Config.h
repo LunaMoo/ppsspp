@@ -357,6 +357,7 @@ public:
 	int iTexScalingType; // 0 = xBRZ, 1 = Hybrid
 	bool bTexDeposterize;
 	bool bTexHardwareScaling;
+	bool bUnlockCachedScaling;  // Disables the per-frame limit of CPU texture scaling.
 	int iFpsLimit1;
 	int iFpsLimit2;
 	int iAnalogFpsLimit;

@@ -103,6 +103,23 @@ private:
 	std::string pendingMemstickFolder_;
 };
 
+// Settings that should not be changed by most users, reachable from the Tools tab.
+class OtherSettingsScreen : public UITabbedBaseDialogScreen {
+public:
+	OtherSettingsScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath) {}
+
+	void CreateTabs() override;
+	void onFinish(DialogResult result) override;
+
+	const char *tag() const override { return "OtherSettings"; }
+
+protected:
+	bool ShowSearchControls() const override { return false; }
+
+private:
+	void CreateOtherSettings(UI::LinearLayout *list);
+};
+
 class GestureMappingScreen : public UITabbedBaseDialogScreen {
 public:
 	GestureMappingScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath) {}

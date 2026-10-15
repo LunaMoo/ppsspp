@@ -1140,12 +1140,40 @@ void GameSettingsScreen::CreateToolsSettings(UI::ViewGroup *tools) {
 	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Add([=](UI::EventParams &) {
 		screenManager()->push(new DeveloperToolsScreen(gamePath_));
 	});
+	tools->Add(new Choice(sy->T("Other Settings")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new OtherSettingsScreen(gamePath_));
+	});
 	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Add([=](UI::EventParams &) {
 		screenManager()->push(new RemoteISOScreen(gamePath_));
 	});
 	tools->Add(new Choice(sy->T("PSP Firmware")))->OnClick.Add([=](UI::EventParams &) {
 		screenManager()->push(new FirmwareScreen(gamePath_));
 	});
+}
+
+void OtherSettingsScreen::CreateTabs() {
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
+	AddTab("OtherSettings", sy->T("Other Settings"), [this](UI::LinearLayout *list) {
+		CreateOtherSettings(list);
+	});
+}
+
+void OtherSettingsScreen::CreateOtherSettings(UI::LinearLayout *list) {
+	using namespace UI;
+
+	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
+
+	list->Add(new ItemHeader(sy->T("Settings that should not be changed by most users")));
+
+	CheckBox *unlockScaling = list->Add(new CheckBox(&g_Config.bUnlockCachedScaling, gr->T("Disable texture scaling limiters")));
+	list->Add(new SettingHint(gr->T("UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead."), unlockScaling));
+}
+
+void OtherSettingsScreen::onFinish(DialogResult result) {
+	UIScreen::onFinish(result);
+	g_Config.Save("OtherSettingsScreen::onFinish");
+	System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 }
 
 void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {

@@ -2949,7 +2949,7 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 	}
 
 	if (plan.scaleFactor != 1) {
-		if (texelsScaledThisFrame_ >= TEXCACHE_MAX_TEXELS_SCALED && plan.slowScaler) {
+		if (!g_Config.bUnlockCachedScaling && texelsScaledThisFrame_ >= TEXCACHE_MAX_TEXELS_SCALED && plan.slowScaler) {
 			entry->status |= TexStatus::TO_SCALE;
 			plan.scaleFactor = 1;
 		} else {
