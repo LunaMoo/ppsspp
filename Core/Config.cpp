@@ -1606,7 +1606,7 @@ static constexpr ConfigSetting upgradeSettings[] = {
 };
 
 static constexpr ConfigSetting themeSettings[] = {
-	ConfigSetting("ThemeName", SETTING(g_Config, sThemeName), "Default", CfgFlag::DEFAULT),
+	ConfigSetting("ThemeName", SETTING(g_Config, sThemeName), "Luna", CfgFlag::DEFAULT),
 };
 
 static constexpr ConfigSetting vrSettings[] = {
