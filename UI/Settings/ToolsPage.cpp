@@ -17,6 +17,7 @@
 
 #include "Common/Data/Text/I18n.h"
 #include "Common/System/System.h"
+#include "Common/UI/PopupScreens.h"
 #include "Common/UI/ScreenManager.h"
 #include "Common/UI/View.h"
 #include "Core/Config.h"
@@ -27,6 +28,10 @@
 #include "UI/SettingsPage.h"
 #include "UI/Settings/MainSettingsPages.h"
 #include "UI/SystemInfoScreen.h"
+#if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
+#include "Common/CommonWindows.h"
+#include "Windows/MainWindow.h"
+#endif
 
 // Settings that should not be changed by most users.
 static void BuildOtherSettingsPage(SettingsPage *page) {
@@ -35,6 +40,29 @@ static void BuildOtherSettingsPage(SettingsPage *page) {
 	page->Setting(&g_Config.bUnlockCachedScaling).OnChange([](UI::EventParams &) {
 		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 	}).Hint({ I18NCat::GRAPHICS, "UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead." });
+
+#if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
+	SettingsPageHost *host = page->Host();
+	page->Header({ I18NCat::SYSTEM, "Window" });
+	page->Setting(&g_Config.bShowMenuBar).OnChange([](UI::EventParams &) {
+		MainWindow::SendApplyWindowDecorations();
+	});
+	page->Setting(&g_Config.bWindowBorderless).OnChange([host](UI::EventParams &) {
+		MainWindow::SendApplyWindowDecorations();
+		host->RecreatePageViews();
+	});
+	if (g_Config.bWindowBorderless) {
+		const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+		const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+		auto applyWindow = [](UI::EventParams &) {
+			MainWindow::SendApplyWindowDecorations();
+		};
+		page->IntSlider(&g_Config.iWindowX, 0, screenWidth, { I18NCat::SYSTEM, "Window X position" }).Default(UI::NO_DEFAULT_INT).Format("%d px").OnChange(applyWindow);
+		page->IntSlider(&g_Config.iWindowY, 0, screenHeight, { I18NCat::SYSTEM, "Window Y position" }).Default(UI::NO_DEFAULT_INT).Format("%d px").OnChange(applyWindow);
+		page->IntSlider(&g_Config.iWindowWidth, 64, screenWidth, { I18NCat::SYSTEM, "Window width" }).Default(UI::NO_DEFAULT_INT).Format("%d px").OnChange(applyWindow);
+		page->IntSlider(&g_Config.iWindowHeight, 64, screenHeight, { I18NCat::SYSTEM, "Window height" }).Default(UI::NO_DEFAULT_INT).Format("%d px").OnChange(applyWindow);
+	}
+#endif
 }
 
 void BuildToolsSettings(SettingsPage *page) {

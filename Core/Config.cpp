@@ -511,7 +511,10 @@ static constexpr ConfigSetting generalSettings[] = {
 	ConfigSetting("DumpFileTypes", SETTING(g_Config, iDumpFileTypes), 0, CfgFlag::PER_GAME),
 
 	ConfigSetting("FullscreenOnDoubleclick", SETTING(g_Config, bFullscreenOnDoubleclick), true, CfgFlag::DONT_SAVE),
-	ConfigSetting("ShowMenuBar", SETTING(g_Config, bShowMenuBar), true, CfgFlag::DEFAULT),
+	ConfigSetting("ShowMenuBar", SETTING(g_Config, bShowMenuBar), true, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Show Windows menu bar"),
+	ConfigSetting("WindowBorderless", SETTING(g_Config, bWindowBorderless), false, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Borderless window"),
 
 	ConfigSetting("MemStickInserted", SETTING(g_Config, bMemStickInserted), true, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::SYSTEM, "Memory Stick inserted"),
