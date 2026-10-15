@@ -769,8 +769,6 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 	}
 
 #if PPSSPP_PLATFORM(ANDROID)
-	CheckBox *extraAudio = audioSettings->Add(new CheckBox(&g_Config.bExtraAudioBuffering, a->T("AudioBufferingForBluetooth", "Bluetooth-friendly buffer (slower)")));
-
 	// Show Oboe debug info
 	const std::string audioErrorStr = AndroidAudio_GetErrorString(g_audioState);
 	if (!audioErrorStr.empty()) {
@@ -778,6 +776,10 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 	}
 #endif
 #endif
+
+	// Shown on all platforms, the larger buffer is applied by StereoResampler everywhere.
+	CheckBox *extraAudio = audioSettings->Add(new CheckBox(&g_Config.bExtraAudioBuffering, a->T("AudioBufferingForBluetooth", "Bluetooth-friendly buffer (slower)")));
+	extraAudio->SetEnabledPtr(&g_Config.bEnableSound);
 
 	std::vector<std::string> micList = Microphone::getDeviceList();
 	if (!micList.empty()) {
