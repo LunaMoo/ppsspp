@@ -52,6 +52,7 @@ struct CompatFlags {
 	bool PixelDepthRounding;
 	bool ClearToRAM;
 	bool Force04154000Download;
+	bool Force04Download;
 	bool DrawSyncEatCycles;
 	bool DrawSyncInstant;
 	bool FakeMipmapChange;

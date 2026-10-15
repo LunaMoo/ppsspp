@@ -1132,7 +1132,11 @@ bool FramebufferManagerCommon::ShouldDownloadFramebufferColor(const VirtualFrame
 		return true;
 	}
 	// Dangan Ronpa hack
-	return PSP_CoreParameter().compat.flags().Force04154000Download && vfb->fb_address == 0x04154000;
+	if (PSP_CoreParameter().compat.flags().Force04154000Download && vfb->fb_address == 0x04154000) {
+		return true;
+	}
+	// Bijin Tokei Portable hack. Wider range than needed (0x04154000-0x04158000 would do), kept universal for testing other games.
+	return PSP_CoreParameter().compat.flags().Force04Download && vfb->fb_address >= 0x04000000 && vfb->fb_address <= 0x04400000;
 }
 
 bool FramebufferManagerCommon::ShouldDownloadFramebufferDepth(const VirtualFramebuffer *vfb) {

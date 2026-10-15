@@ -97,6 +97,7 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "PixelDepthRounding", &flags_.PixelDepthRounding);
 	CheckSetting(iniFile, gameID, "ClearToRAM", &flags_.ClearToRAM);
 	CheckSetting(iniFile, gameID, "Force04154000Download", &flags_.Force04154000Download);
+	CheckSetting(iniFile, gameID, "Force04Download", &flags_.Force04Download);
 	CheckSetting(iniFile, gameID, "DrawSyncEatCycles", &flags_.DrawSyncEatCycles);
 	CheckSetting(iniFile, gameID, "DrawSyncInstant", &flags_.DrawSyncInstant);
 	CheckSetting(iniFile, gameID, "FakeMipmapChange", &flags_.FakeMipmapChange);
