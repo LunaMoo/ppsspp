@@ -1049,6 +1049,8 @@ static constexpr ConfigSetting graphicsSettings[] = {
 	ConfigSetting("TexDeposterize", SETTING(g_Config, bTexDeposterize), false, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::GRAPHICS, "Deposterize"),
 	ConfigSetting("TexHardwareScaling", SETTING(g_Config, bTexHardwareScaling), false, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	ConfigSetting("UnlockCachedScaling", SETTING(g_Config, bUnlockCachedScaling), false, CfgFlag::DEFAULT)
+		.Label(I18NCat::GRAPHICS, "Disable texture scaling limiters"),
 	ConfigSetting("VerticalSync", SETTING(g_Config, bVSync), true, CfgFlag::PER_GAME)
 		.Label(I18NCat::GRAPHICS, "VSync"),
 	ConfigSetting("LowLatencyPresent", SETTING(g_Config, bLowLatencyPresent), false, CfgFlag::PER_GAME)

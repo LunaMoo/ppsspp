@@ -19,6 +19,7 @@
 #include "Common/System/System.h"
 #include "Common/UI/ScreenManager.h"
 #include "Common/UI/View.h"
+#include "Core/Config.h"
 #include "UI/DeveloperSettingsPages.h"
 #include "UI/RemoteISOScreen.h"
 #include "UI/RetroAchievementScreens.h"
@@ -26,6 +27,15 @@
 #include "UI/SettingsPage.h"
 #include "UI/Settings/MainSettingsPages.h"
 #include "UI/SystemInfoScreen.h"
+
+// Settings that should not be changed by most users.
+static void BuildOtherSettingsPage(SettingsPage *page) {
+	page->Header({ I18NCat::SYSTEM, "Settings that should not be changed by most users" });
+
+	page->Setting(&g_Config.bUnlockCachedScaling).OnChange([](UI::EventParams &) {
+		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+	}).Hint({ I18NCat::GRAPHICS, "UnlockCachedScaling Tip", "Only for testing and in some light cases on powerful desktops, this WILL cause stutter even at max FPS! Hardware (Vulkan) texture scaling is strongly recommended instead." });
+}
 
 void BuildToolsSettings(SettingsPage *page) {
 	using namespace UI;
@@ -50,6 +60,7 @@ void BuildToolsSettings(SettingsPage *page) {
 		host->PageScreenManager()->push(new SystemInfoScreen(host->PageGamePath()));
 	});
 	page->Link({ I18NCat::SYSTEM, "Developer Tools" }, I18NCat::DEVELOPER, &BuildDeveloperToolsPage);
+	page->Link({ I18NCat::SYSTEM, "Other Settings" }, I18NCat::SYSTEM, &BuildOtherSettingsPage);
 	page->Choice({ I18NCat::REMOTEISO, "Remote disc streaming" }).OpensScreen().OnClick([host](UI::EventParams &) {
 		host->PageScreenManager()->push(new RemoteISOScreen(host->PageGamePath()));
 	});
