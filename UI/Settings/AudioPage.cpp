@@ -66,6 +66,8 @@ void BuildAudioSettings(SettingsPage *page) {
 
 	page->Setting(&g_Config.iGameVolume).Enabled(&g_Config.bEnableSound);
 	page->Setting(&g_Config.iReverbVolume).Enabled(&g_Config.bEnableSound);
+	page->Setting(&g_Config.iSASVolume).Enabled(&g_Config.bEnableSound).Hint({ I18NCat::AUDIO, "SAS volume Tip", "Sound effects and sequenced music" });
+	page->Setting(&g_Config.iAtracMp3Volume).Enabled(&g_Config.bEnableSound).Hint({ I18NCat::AUDIO, "ATRAC / MP3 volume Tip", "Most music, voices and video audio" });
 	page->Setting(&g_Config.iAltSpeedVolume).Enabled(&g_Config.bEnableSound);
 	page->Setting(&g_Config.iAchievementVolume).Enabled(&g_Config.bEnableSound).OnChange([](EventParams &e) {
 		// Audio preview
