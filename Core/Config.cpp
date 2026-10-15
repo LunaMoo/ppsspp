@@ -1372,13 +1372,13 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 	g_logManager.LoadConfig(log);
 
 	Section *recent = iniFile.GetOrCreateSection("Recent");
-	iMaxRecent = 60;
+	iMaxRecent = 1000;
 	recent->Get("MaxRecent", &iMaxRecent);
 
 	// Fix issue from switching from uint (hex in .ini) to int (dec)
 	// -1 is okay, though. We'll just ignore recent stuff if it is.
 	if (iMaxRecent == 0)
-		iMaxRecent = 60;
+		iMaxRecent = 1000;
 
 	// Fix JIT setting if no longer available.
 	if (!System_GetPropertyBool(SYSPROP_CAN_JIT)) {
