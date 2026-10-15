@@ -19,6 +19,12 @@ Help with testing, investigating, or fixing bugs is always welcome.  See [the li
 
 For the latest source code, see [our GitHub page](https://github.com/hrydgard/ppsspp).
 
+This is the Luna version (LessHackishBranch), a personal build on top of the official PPSSPP.
+It adds a few extra options (more rendering resolution and texture scaling levels, separate SAS and
+ATRAC/MP3 volume, a borderless window and some rarely needed settings under Tools > Other Settings),
+a purple theme and its own icon, and can be installed next to the official version.
+~ LunaMoo
+
 For documentation of all kinds (usage, reference, development), see the [documentation on the main website](https://www.ppsspp.org/docs)
 
 For build instructions and other development tutorials, see [the wiki](https://github.com/hrydgard/ppsspp/wiki).

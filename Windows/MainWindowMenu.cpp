@@ -171,9 +171,9 @@ namespace MainWindow {
 		// Don't need to update here, happens later.
 
 		HMENU helpMenu = GetSubmenuById(hMenu, ID_HELP_MENU);
-		if (System_GetPropertyBool(SYSPROP_APP_GOLD)) {
-			RemoveMenu(helpMenu, ID_HELP_BUYGOLD, MF_BYCOMMAND);
-		}
+		// Luna: no Buy Gold or Discord entries.
+		RemoveMenu(helpMenu, ID_HELP_BUYGOLD, MF_BYCOMMAND);
+		RemoveMenu(helpMenu, ID_HELP_DISCORD, MF_BYCOMMAND);
 
 		HMENU hMenuOptions = GetSubmenuById(hMenu, ID_OPTIONS_MENU);
 		g_hMenuBackend = GetSubmenuById(hMenuOptions, ID_OPTIONS_BACKEND_MENU);

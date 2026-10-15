@@ -609,26 +609,9 @@ void CreditsScreen::CreateDialogViews(UI::ViewGroup *parent) {
 		right->GetLayoutParams()->width = columnWidth;
 	}
 
-	int rightYOffset = 0;
-	if (!System_GetPropertyBool(SYSPROP_APP_GOLD)) {
-		ScreenManager *sm = screenManager();
-		Choice *gold = new Choice(mm->T("Buy PPSSPP Gold"));
-		gold->SetIconRight(ImageID("I_ICON_GOLD"), 0.5f);
-		gold->SetImageScale(0.6f);  // for the left-icon in case of vertical.
-		gold->SetShine(true);
-
-		left->Add(new ChoiceGroup())->Add(gold)->OnClick.Add([sm](UI::EventParams) {
-			LaunchBuyGold(sm);
-		});
-		rightYOffset = 74;
-	}
-
 	ChoiceGroup *social = right->Add(new ChoiceGroup());
 	social->Add(new Choice(cr->T("PPSSPP Forums"), ImageID("I_LINK_OUT")))->OnClick.Add([](UI::EventParams &e) {
 		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://forums.ppsspp.org");
-	});
-	social->Add(new Choice(cr->T("Discord"), ImageID("I_LOGO_DISCORD")))->OnClick.Add([](UI::EventParams &e) {
-		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://discord.gg/5NJB6dD");
 	});
 	social->Add(new Choice(cr->T("@PPSSPP_emu"), ImageID("I_LOGO_X")))->OnClick.Add([](UI::EventParams &e) {
 		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://x.com/PPSSPP_emu");
@@ -779,6 +762,7 @@ void CreditsScroller::Draw(UIContext &dc) {
 		"xxhash",
 		"naett-http",
 		"PSP SDK",
+		"aemu",
 		"",
 		"",
 		cr->T("website", "Check out the website:"),

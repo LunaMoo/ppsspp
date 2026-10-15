@@ -367,8 +367,6 @@ void MainScreen::CreateMainButtons(UI::LinearLayout *parent, bool portrait) {
 	using namespace UI;
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
 	auto di = GetI18NCategory(I18NCat::DIALOG);
-	const bool showGold = !System_GetPropertyBool(SYSPROP_APP_GOLD) && (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) != DEVICE_TYPE_VR);
-
 	if (portrait) {
 		// Icon buttons only, and no exit button - there's no space.
 		parent->Add(new Spacer(1.0f, new LinearLayoutParams(1.0f)));
@@ -377,15 +375,6 @@ void MainScreen::CreateMainButtons(UI::LinearLayout *parent, bool portrait) {
 		}
 		parent->Add(new Choice(ImageID("I_GEAR"), new LinearLayoutParams()))->OnClick.Handle(this, &MainScreen::OnGameSettings);
 		parent->Add(new Choice(ImageID("I_INFO"), new LinearLayoutParams()))->OnClick.Handle(this, &MainScreen::OnCredits);
-		if (showGold) {
-			Choice *gold = parent->Add(new Choice(ImageID("I_ICON_GOLD"), new LinearLayoutParams()));
-			gold->OnClick.Add([this](UI::EventParams &) {
-				LaunchBuyGold(this->screenManager());
-			});
-			gold->SetIconRight(ImageID("I_ICON_GOLD"), 0.5f);
-			gold->SetImageScale(0.6f);  // for the left icon.
-			gold->SetShine(true);
-		}
 		parent->SetRoundCorners();
 		return;
 	} else {
@@ -401,16 +390,6 @@ void MainScreen::CreateMainButtons(UI::LinearLayout *parent, bool portrait) {
 		mainButtons->Add(new Choice(mm->T("Game Settings", "Settings")))->OnClick.Handle(this, &MainScreen::OnGameSettings);
 		mainButtons->Add(new Choice(mm->T("About PPSSPP")))->OnClick.Handle(this, &MainScreen::OnCredits);
 		mainButtons->Add(new Choice(mm->T("www.ppsspp.org")))->OnClick.Handle(this, &MainScreen::OnPPSSPPOrg);
-
-		if (showGold) {
-			Choice *gold = mainButtons->Add(new Choice(mm->T("Buy PPSSPP Gold")));
-			gold->OnClick.Add([this](UI::EventParams &) {
-				LaunchBuyGold(this->screenManager());
-			});
-			gold->SetIconRight(ImageID("I_ICON_GOLD"), 0.5f);
-			gold->SetImageScale(0.6f);
-			gold->SetShine(true);
-		}
 
 		// Exit button.
 
