@@ -30,6 +30,7 @@
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/TimeUtil.h"
 #include "Common/UI/Context.h"
+#include "Common/UI/ScrollView.h"
 
 #include "Core/Config.h"
 #include "Core/System.h"
@@ -38,6 +39,7 @@
 #include "UI/BackgroundAudio.h"
 #include "UI/GameInfoCache.h"
 #include "UI/GamePacker.h"
+#include "UI/UnPackScreen.h"
 
 namespace GamePacker {
 namespace {
@@ -49,7 +51,8 @@ struct Job {
 	Path writeOutput;  // What gets written: finalOutput, or a temporary name when that's the original's.
 	bool replace = false;
 	bool toISO = false;
-	CSOCompress::Preset preset = CSOCompress::Preset::Great;
+	ImageFormat format = ImageFormat::CSO;
+	int preset = 1;
 
 	std::atomic<float> progress{0.0f};
 	double startTime = 0.0;
@@ -79,9 +82,9 @@ void RunJob(Job *job) {
 	bool cancelled = false;
 	bool success;
 	if (job->toISO) {
-		success = CSOCompress::Extract(job->file, job->writeOutput, progress, &error, &cancelled);
+		success = ExtractDiscImage(job->file, job->writeOutput, progress, &error, &cancelled);
 	} else {
-		success = CSOCompress::Compress(job->file, job->writeOutput, job->preset, progress, &error, &cancelled);
+		success = CompressDiscImage(job->format, job->preset, job->file, job->writeOutput, progress, &error, &cancelled);
 	}
 	if (!success && !cancelled) {
 		ERROR_LOG(Log::Loader, "GamePacker: Failed on %s: %s", job->file.c_str(), error.c_str());
@@ -111,13 +114,21 @@ std::string OutputBaseName(const Path &gamePath, const Path &file) {
 	return name;
 }
 
+Container ContainerOf(ImageFormat format) {
+	switch (format) {
+	case ImageFormat::CHD: return Container::CHD;
+	case ImageFormat::PBP: return Container::PBP;
+	default: return Container::CSO;
+	}
+}
+
 // Where an option puts its result.
 Path FinalOutput(const Path &gamePath, const Path &file, Container from, const Option &option) {
-	const Container to = option.toISO ? Container::ISO : Container::CSO;
+	const Container to = option.toISO ? Container::ISO : ContainerOf(option.format);
 	if (to == from) {
 		return file;
 	}
-	return file.NavigateUp() / (OutputBaseName(gamePath, file) + (option.toISO ? ".iso" : ".cso"));
+	return file.NavigateUp() / (OutputBaseName(gamePath, file) + (option.toISO ? ".iso" : ImageFormatExtension(option.format)));
 }
 
 }  // namespace
@@ -165,16 +176,25 @@ std::vector<Option> ListOptions(Container from) {
 		option.description = std::string(ga->T("PackDescISO", "Uncompressed disc image. Largest, reads fastest."));
 		options.push_back(option);
 	}
-	auto add = [&](CSOCompress::Preset preset, std::string_view name, std::string_view description) {
+	auto add = [&](ImageFormat format, int preset, std::string_view name, std::string_view description) {
 		Option option;
+		option.format = format;
 		option.preset = preset;
-		option.title = "CSO - " + std::string(name);
+		static const char *const formatNames[] = { "CHD", "CSO", "PBP" };  // Indexed by ImageFormat.
+		option.title = std::string(formatNames[(int)format]) + " - " + std::string(name);
 		option.description = description;
 		options.push_back(option);
 	};
-	add(CSOCompress::Preset::Max, ga->T("Max"), ga->T("PackDescCSOMax", "Zopfli, 256K blocks. Smallest CSO, slow to compress."));
-	add(CSOCompress::Preset::Great, ga->T("Great"), ga->T("PackDescCSOGreat", "libdeflate, 64K blocks. Nearly as small, much faster."));
-	add(CSOCompress::Preset::PSPCompatible, ga->T("PSP Compatible"), ga->T("PackDescCSOPSP", "zlib, 2K blocks. Readable by PSP custom firmware."));
+	// Indexed like iCHDPreset, iCSOPreset and iPBPPreset, in the order the Un/Pack screen lists them.
+	add(ImageFormat::CHD, 0, ga->T("Large Hunk"), ga->T("PackDescCHDLarge", "32K hunks. Smallest for most games."));
+	add(ImageFormat::CHD, 1, ga->T("Small Hunk"), ga->T("PackDescCHDSmall", "2K hunks. Smallest when a game repeats a lot of data."));
+	add(ImageFormat::CHD, 2, ga->T("Quick Access"), ga->T("PackDescCHDQuick", "Zstandard, 2K hunks. Bigger, but fastest to read while playing."));
+	add(ImageFormat::CSO, 0, ga->T("Max"), ga->T("PackDescCSOMax", "Zopfli, 256K blocks. Smallest CSO, slow to compress."));
+	add(ImageFormat::CSO, 1, ga->T("Great"), ga->T("PackDescCSOGreat", "libdeflate, 64K blocks. Nearly as small, much faster."));
+	add(ImageFormat::CSO, 2, ga->T("PSP Compatible"), ga->T("PackDescCSOPSP", "zlib, 2K blocks. Readable by PSP custom firmware."));
+	add(ImageFormat::PBP, 0, ga->T("Max"), ga->T("PackDescPBPMax", "Smallest LZRC EBOOT."));
+	add(ImageFormat::PBP, 1, ga->T("PSP Compatible"), ga->T("PackDescPBPPSP", "LZRC like sign_np. What real PSPs are known to read."));
+	add(ImageFormat::PBP, 2, ga->T("Uncompressed"), ga->T("PackDescPBPNone", "Blocks stored as they are. Largest, fastest."));
 	return options;
 }
 
@@ -185,7 +205,7 @@ bool MustReplace(const Path &gamePath, const Option &option) {
 }
 
 bool CanStart() {
-	return !IsBusy() && !PSP_IsInited();
+	return !IsBusy() && !IsUnPackJobRunning() && !PSP_IsInited();
 }
 
 bool Start(const Path &gamePath, const Option &option, bool replaceOriginal) {
@@ -202,6 +222,7 @@ bool Start(const Path &gamePath, const Option &option, bool replaceOriginal) {
 	}
 
 	job->toISO = option.toISO;
+	job->format = option.format;
 	job->preset = option.preset;
 	job->finalOutput = FinalOutput(gamePath, job->file, from, option);
 	job->replace = replaceOriginal || job->finalOutput == job->file;
@@ -303,6 +324,9 @@ void UpdateOnUIThread() {
 					// The original is gone, so keep the converted game under its temporary name.
 					problem = std::string(ga->T("PackRenameFailed", "Could not rename the new file"));
 					result.newPath = job->writeOutput;
+				} else if (job->finalOutput == job->file && job->file != job->gamePath) {
+					// Repacked a PSP/GAME/<folder> EBOOT: the folder is still the game.
+					result.newPath = job->gamePath;
 				} else {
 					result.newPath = job->finalOutput;
 				}
@@ -415,10 +439,12 @@ GamePackPopupScreen::GamePackPopupScreen(const Path &gamePath, GamePacker::Conta
 	: UI::PopupScreen(PopupTitle(from), PopupButton(from), GetI18NCategory(I18NCat::DIALOG)->T("Cancel")), gamePath_(gamePath) {
 	options_ = GamePacker::ListOptions(from);
 
-	// Start from the preset used last. Extracting is listed first.
+	// Start from what was used last, here or on the Un/Pack screen. Extracting is listed first.
 	if (from == GamePacker::Container::ISO) {
+		const int formatPresets[] = { g_Config.iCHDPreset, g_Config.iCSOPreset, g_Config.iPBPPreset };  // Indexed by ImageFormat.
+		const int format = std::clamp(g_Config.iUnPackFormat, 0, 2);
 		for (size_t i = 0; i < options_.size(); i++) {
-			if (!options_[i].toISO && (int)options_[i].preset == g_Config.iCSOPreset) {
+			if (!options_[i].toISO && (int)options_[i].format == format && options_[i].preset == formatPresets[format]) {
 				selected_ = (int)i;
 				break;
 			}
@@ -434,7 +460,8 @@ void GamePackPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	auto ga = GetI18NCategory(I18NCat::GAME);
 
 	choices_.clear();
-	LinearLayout *list = parent->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
+	ScrollView *scroll = parent->Add(new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FillVertical() ? 0.0f : WRAP_CONTENT, 1.0f)));
+	LinearLayout *list = scroll->Add(new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 	list->SetSpacing(0.0f);
 	for (size_t i = 0; i < options_.size(); i++) {
 		PackOptionView *view = list->Add(new PackOptionView(options_[i].title, options_[i].description));
@@ -459,7 +486,7 @@ void GamePackPopupScreen::Select(int index) {
 	for (size_t i = 0; i < choices_.size(); i++) {
 		static_cast<PackOptionView *>(choices_[i])->SetChecked((int)i == index);
 	}
-	// Repacking a CSO as CSO writes the game's own file name, so the original has to go.
+	// Repacking into the same format writes the game's own file name, so the original has to go.
 	const bool forced = GamePacker::MustReplace(gamePath_, options_[index]);
 	replace_ = forced || replaceWanted_;
 	if (replaceCheckBox_) {
@@ -473,7 +500,12 @@ void GamePackPopupScreen::OnCompleted(DialogResult result) {
 	}
 	const GamePacker::Option &option = options_[selected_];
 	if (!option.toISO) {
-		g_Config.iCSOPreset = (int)option.preset;
+		g_Config.iUnPackFormat = (int)option.format;
+		switch (option.format) {
+		case ImageFormat::CHD: g_Config.iCHDPreset = option.preset; break;
+		case ImageFormat::CSO: g_Config.iCSOPreset = option.preset; break;
+		case ImageFormat::PBP: g_Config.iPBPPreset = option.preset; break;
+		}
 	}
 	if (!GamePacker::MustReplace(gamePath_, option)) {
 		g_Config.bPackReplaceOriginal = replace_;

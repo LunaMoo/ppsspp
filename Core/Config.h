@@ -253,9 +253,15 @@ public:
 	bool bCompressSymbols;
 	bool bCacheFullIsoInRam;
 	bool bAutoUpgradeFirmware;
-	// The game screen's Pack / Extract / Repack (UI/GamePacker.h).
+	// Converting games: the game screen's Pack / Extract / Repack (UI/GamePacker.h) and
+	// Tools > Un/Pack (UI/UnPackScreen.h).
+	int iUnPackFormat;  // ImageFormat: 0 = CHD, 1 = CSO, 2 = PBP
+	int iCHDPreset;  // CHDCompress::Preset: 0 = Large Hunk, 1 = Small Hunk, 2 = Quick Access
 	int iCSOPreset;  // CSOCompress::Preset: 0 = Max, 1 = Great, 2 = PSP Compatible
-	bool bPackReplaceOriginal;
+	int iPBPPreset;  // PBPCompress::Preset: 0 = Max, 1 = PSP Compatible, 2 = Uncompressed
+	bool bPackReplaceOriginal;  // The game screen's.
+	bool bUnPackIncludeSubfolders;
+	bool bUnPackDeleteOriginals;  // Un/Pack's.
 	int iRemoteISOPort; // Also used for serving a local remote debugger.
 	std::string sLastRemoteISOServer;
 	int iLastRemoteISOPort;

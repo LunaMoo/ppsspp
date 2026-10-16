@@ -23,10 +23,11 @@
 
 #include "Common/File/Path.h"
 #include "Common/UI/PopupScreens.h"
-#include "UI/CSOCompress.h"
+#include "UI/DiscImage.h"
 
-// Packs the game shown on the game screen as CSO, or extracts or repacks it, in the background
-// (UI/CSOCompress.h does the work). One game at a time.
+// Packs the game shown on the game screen as CHD, CSO or PBP, or extracts or repacks it, in the
+// background (UI/DiscImage.h does the work). One game at a time, and never while the Un/Pack screen
+// has a job running.
 namespace GamePacker {
 
 enum class Container {
@@ -43,12 +44,13 @@ Container DetectContainer(const Path &gamePath, Path *file);
 
 struct Option {
 	bool toISO = false;  // Extract only.
-	CSOCompress::Preset preset = CSOCompress::Preset::Great;
+	ImageFormat format = ImageFormat::CSO;
+	int preset = 1;  // Indexed like iCHDPreset, iCSOPreset and iPBPPreset.
 	std::string title;
 	std::string description;
 };
 
-// For an ISO the CSO presets, for anything else Extract to ISO first and then the presets.
+// For an ISO every format's presets, for anything else Extract to ISO first and then the presets.
 std::vector<Option> ListOptions(Container from);
 
 // The option writes to the game's own file name (repacking a CSO as CSO), so the original has to go.
@@ -96,6 +98,7 @@ public:
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 
 protected:
+	bool FillVertical() const override { return options_.size() > 5; }
 	UI::Size PopupWidth() const override { return 600; }
 	void OnCompleted(DialogResult result) override;
 

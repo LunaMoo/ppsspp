@@ -16,6 +16,129 @@
     <ClCompile Include="CSOCompress.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="CHDCompress.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="PBPCompress.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="DiscImage.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="UnPackScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitmath.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitreader.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitwriter.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\cpu.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\crc.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_avx2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse42.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_ssse3.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\float.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\format.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_avx2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_fma.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_neon.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse41.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\md5.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\memory.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_decoder.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_framing.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_avx2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_sse2.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_ssse3.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\window.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\share\win_utf8_io\win_utf8_io.c">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\ipbp_util.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\convert.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\aes.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\ecdsa.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\sha1.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\amctrl.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\iso9660.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\lzrc.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\sfo.cpp">
+      <Filter>ext</Filter>
+    </ClCompile>
     <ClCompile Include="..\ext\zopfli\blocksplitter.c">
       <Filter>ext</Filter>
     </ClCompile>
@@ -215,6 +338,48 @@
     </ClInclude>
     <ClInclude Include="CSOCompress.h">
       <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="CHDCompress.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="PBPCompress.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="DiscImage.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="UnPackScreen.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\..\include\ipbp\ipbp.hpp">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\util.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\aes.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\ecdsa.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\sha1.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\amctrl.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\iso9660.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\lzrc.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\sfo.h">
+      <Filter>ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\flac\include\FLAC\stream_encoder.h">
+      <Filter>ext</Filter>
     </ClInclude>
     <ClInclude Include="..\ext\zopfli\blocksplitter.h">
       <Filter>ext</Filter>

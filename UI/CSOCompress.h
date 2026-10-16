@@ -17,14 +17,14 @@
 
 #pragma once
 
-#include <functional>
 #include <string>
 
 #include "Common/File/Path.h"
+#include "UI/DiscImage.h"
 
-// Writes PSP disc images as CSO v1 or plain ISO. The input is anything PPSSPP can play as a disc
-// (ISO, CSO, CHD, a PSN EBOOT.PBP), read through its own block devices, so a repack is one pass
-// with no temporary file. The presets match maxcso's (LunaMoo/maxcso) as the Un/Pack menu used them.
+// Writes PSP disc images as CSO v1. The input is anything PPSSPP can play as a disc
+// (UI/DiscImage.h), so a repack is one pass with no temporary file. The presets match maxcso's
+// (LunaMoo/maxcso) as the Un/Pack menu used them, and so does the output, byte for byte.
 namespace CSOCompress {
 
 enum class Preset {
@@ -33,12 +33,10 @@ enum class Preset {
 	PSPCompatible = 2,  // zlib level 9, 2K blocks: what every PSP custom firmware reads.
 };
 
-// Return false to cancel.
-typedef std::function<bool(float progress)> ProgressFunc;
+typedef ImageProgressFunc ProgressFunc;
 
 // Blocking, and uses every core. Never overwrites, and deletes a partial output on failure or
 // cancel (*cancelled is set then).
 bool Compress(const Path &input, const Path &output, Preset preset, const ProgressFunc &progress, std::string *error, bool *cancelled);
-bool Extract(const Path &input, const Path &output, const ProgressFunc &progress, std::string *error, bool *cancelled);
 
 }  // namespace CSOCompress

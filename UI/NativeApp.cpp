@@ -137,6 +137,7 @@
 #include "UI/BackgroundAudio.h"
 #include "UI/ControlMappingScreen.h"
 #include "UI/GamePacker.h"
+#include "UI/UnPackScreen.h"
 #include "UI/DevScreens.h"
 #include "UI/DiscordIntegration.h"
 #include "UI/EmuScreen.h"
@@ -1845,6 +1846,7 @@ void NativeShutdown() {
 
 	// A half-written image would be left behind otherwise.
 	GamePacker::Shutdown();
+	ShutdownUnPack();
 
 	if (g_Config.bAchievementsEnable) {
 		FILE *iconCacheFile = File::OpenCFile(GetSysDirectory(DIRECTORY_CACHE) / "icon.cache", "wb");

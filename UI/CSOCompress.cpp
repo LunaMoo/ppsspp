@@ -28,10 +28,8 @@
 #include "Common/File/FileUtil.h"
 #include "Common/Log.h"
 #include "Common/Swap.h"
-#include "Common/Thread/ThreadUtil.h"
-#include "Core/FileSystems/BlockDevices.h"
-#include "Core/Loaders.h"
 #include "UI/CSOCompress.h"
+#include "UI/DiscImage.h"
 
 #ifdef SHARED_ZLIB
 #include <zlib.h>
@@ -152,52 +150,6 @@ private:
 	libdeflate_compressor *libdeflate_ = nullptr;
 };
 
-// Opens anything PPSSPP plays as a disc, as 2048-byte sectors.
-struct Source {
-	std::unique_ptr<FileLoader> loader;
-	std::unique_ptr<BlockDevice> device;
-	uint64_t size = 0;
-
-	bool Open(const Path &path, std::string *error) {
-		loader.reset(ConstructFileLoader(path));
-		if (!loader || !loader->Exists()) {
-			*error = "Could not open the game";
-			return false;
-		}
-		device.reset(ConstructBlockDevice(loader.get(), error));
-		if (!device) {
-			return false;
-		}
-		size = (uint64_t)device->GetNumBlocks() * SECTOR_SIZE;
-		if (device->GetUncompressedSize() != size) {
-			*error = "The image isn't a whole number of sectors";
-			return false;
-		}
-		if (size == 0) {
-			*error = "The image is empty";
-			return false;
-		}
-		return true;
-	}
-};
-
-bool WriteAll(FILE *f, const void *data, size_t size) {
-	return size == 0 || fwrite(data, 1, size, f) == size;
-}
-
-// Fails a conversion, removing what it wrote.
-bool Fail(FILE *&f, const Path &output, std::string *error, const char *message) {
-	if (f) {
-		fclose(f);
-		f = nullptr;
-	}
-	File::Delete(output, true);
-	if (message) {
-		*error = message;
-	}
-	return false;
-}
-
 }  // namespace
 
 bool Compress(const Path &input, const Path &output, Preset preset, const ProgressFunc &progress, std::string *error, bool *cancelled) {
@@ -206,7 +158,7 @@ bool Compress(const Path &input, const Path &output, Preset preset, const Progre
 		*error = "Output file already exists";
 		return false;
 	}
-	Source src;
+	DiscImageReader src;
 	if (!src.Open(input, error)) {
 		return false;
 	}
@@ -214,14 +166,15 @@ bool Compress(const Path &input, const Path &output, Preset preset, const Progre
 	const PresetSettings settings = SettingsFor(preset);
 	const uint32_t blockSize = settings.blockSize;
 	const uint32_t sectorsPerBlock = blockSize / SECTOR_SIZE;
-	const uint32_t numBlocks = (uint32_t)((src.size + blockSize - 1) / blockSize);
-	const uint32_t numSectors = src.device->GetNumBlocks();
+	const uint64_t size = src.Size();
+	const uint32_t numBlocks = (uint32_t)((size + blockSize - 1) / blockSize);
+	const uint32_t numSectors = src.NumSectors();
 
 	// The index holds offsets >> shift in 31 bits. Like maxcso, size it for the worst case, every
 	// block stored uncompressed.
 	const uint64_t headerSize = 24;
 	const uint64_t dataStart = headerSize + ((uint64_t)numBlocks + 1) * 4;
-	const uint64_t worst = dataStart + src.size;
+	const uint64_t worst = dataStart + size;
 	uint8_t indexShift = 0;
 	for (int i = 62; i >= 31; --i) {
 		if (worst >= (1ULL << i)) {
@@ -234,30 +187,31 @@ bool Compress(const Path &input, const Path &output, Preset preset, const Progre
 		return (pos + align - 1) & ~(align - 1);
 	};
 
-	FILE *f = File::OpenCFile(output, "wb");
-	if (!f) {
-		*error = "Could not create the output file";
+	ImageOutputFile out;
+	if (!out.Open(output, error)) {
 		return false;
 	}
 	std::vector<u32_le> index(numBlocks + 1);
 	// Header and index go in at the end, once the offsets are known.
 	std::vector<u8> zeros((size_t)(alignUp(dataStart)), 0);
-	if (!WriteAll(f, zeros.data(), zeros.size())) {
-		return Fail(f, output, error, "Could not write the output file");
+	if (!out.Write(zeros.data(), zeros.size())) {
+		*error = "Could not write the output file";
+		return false;
 	}
-	uint64_t pos = zeros.size();
 
-	const unsigned threads = std::max(1u, std::thread::hardware_concurrency());
+	const unsigned threads = WorkerCount();
 	const uint32_t batchBlocks = std::max<uint32_t>(threads * 4, (uint32_t)(BATCH_BYTES / blockSize));
 	std::vector<u8> in((size_t)batchBlocks * blockSize);
-	std::vector<std::vector<u8>> out(batchBlocks);
+	std::vector<std::vector<u8>> compressed(batchBlocks);
+	std::vector<std::unique_ptr<BlockCompressor>> compressors(threads);
 	static const u8 padding[2048]{};
 
 	INFO_LOG(Log::Loader, "CSOCompress: %s -> %s, %u blocks of %u, %u threads", input.c_str(), output.c_str(), numBlocks, blockSize, threads);
 	for (uint32_t first = 0; first < numBlocks; first += batchBlocks) {
 		if (progress && !progress((float)first / (float)numBlocks)) {
 			*cancelled = true;
-			return Fail(f, output, error, "Cancelled");
+			*error = "Cancelled";
+			return false;
 		}
 		const uint32_t count = std::min(batchBlocks, numBlocks - first);
 
@@ -265,109 +219,50 @@ bool Compress(const Path &input, const Path &output, Preset preset, const Progre
 		const uint32_t firstSector = first * sectorsPerBlock;
 		const uint32_t sectors = std::min(count * sectorsPerBlock, numSectors - firstSector);
 		memset(in.data() + (size_t)sectors * SECTOR_SIZE, 0, ((size_t)count * sectorsPerBlock - sectors) * SECTOR_SIZE);
-		if (!src.device->ReadBlocks(firstSector, (int)sectors, in.data())) {
-			return Fail(f, output, error, "Could not read the game");
+		if (!src.ReadSectors(firstSector, sectors, in.data())) {
+			*error = "Could not read the game";
+			return false;
 		}
 
-		std::atomic<uint32_t> next{0};
-		auto work = [&]() {
-			BlockCompressor compressor(settings);
-			uint32_t i;
-			while ((i = next++) < count) {
-				compressor.Compress(in.data() + (size_t)i * blockSize, &out[i]);
+		RunParallel(count, [&](unsigned worker, uint32_t i) {
+			if (!compressors[worker]) {
+				compressors[worker].reset(new BlockCompressor(settings));
 			}
-		};
-		std::vector<std::thread> pool;
-		const unsigned workers = std::min<unsigned>(threads, count);
-		for (unsigned t = 1; t < workers; ++t) {
-			pool.emplace_back([&]() {
-				SetCurrentThreadName("CSOCompress");
-				work();
-			});
-		}
-		work();
-		for (std::thread &t : pool) {
-			t.join();
-		}
+			compressors[worker]->Compress(in.data() + (size_t)i * blockSize, &compressed[i]);
+		});
 
 		for (uint32_t i = 0; i < count; ++i) {
 			// Not smaller once padded to the index alignment (images over 2 GB): store it.
-			const bool stored = out[i].empty() || alignUp(out[i].size()) >= blockSize;
-			const u8 *data = stored ? in.data() + (size_t)i * blockSize : out[i].data();
-			const size_t size = stored ? blockSize : out[i].size();
-			index[first + i] = (u32)(pos >> indexShift) | (stored ? CSO_INDEX_UNCOMPRESSED : 0);
-			if (!WriteAll(f, data, size)) {
-				return Fail(f, output, error, "Could not write the output file");
+			const bool stored = compressed[i].empty() || alignUp(compressed[i].size()) >= blockSize;
+			const u8 *data = stored ? in.data() + (size_t)i * blockSize : compressed[i].data();
+			const size_t dataSize = stored ? blockSize : compressed[i].size();
+			index[first + i] = (u32)(out.Position() >> indexShift) | (stored ? CSO_INDEX_UNCOMPRESSED : 0);
+			const uint64_t end = out.Position() + dataSize;
+			if (!out.Write(data, dataSize) || !out.Write(padding, (size_t)(alignUp(end) - end))) {
+				*error = "Could not write the output file";
+				return false;
 			}
-			pos += size;
-			const uint64_t aligned = alignUp(pos);
-			if (!WriteAll(f, padding, (size_t)(aligned - pos))) {
-				return Fail(f, output, error, "Could not write the output file");
-			}
-			pos = aligned;
 		}
 	}
-	index[numBlocks] = (u32)(pos >> indexShift);
+	index[numBlocks] = (u32)(out.Position() >> indexShift);
 
 	// The header: "CISO", its size, the image size, the block size, version 1 and the shift.
 	u8 header[24]{};
 	memcpy(header, "CISO", 4);
 	const u32_le headerSizeLE = (u32)headerSize;
-	const u64_le sizeLE = src.size;
+	const u64_le sizeLE = size;
 	const u32_le blockSizeLE = blockSize;
 	memcpy(header + 4, &headerSizeLE, 4);
 	memcpy(header + 8, &sizeLE, 8);
 	memcpy(header + 16, &blockSizeLE, 4);
 	header[20] = 1;
 	header[21] = indexShift;
-	if (File::Fseek(f, 0, SEEK_SET) != 0 || !WriteAll(f, header, sizeof(header)) || !WriteAll(f, index.data(), index.size() * sizeof(u32_le))) {
-		return Fail(f, output, error, "Could not write the output file");
-	}
-	if (fclose(f) != 0) {
-		f = nullptr;
-		return Fail(f, output, error, "Could not write the output file");
-	}
-	if (progress) {
-		progress(1.0f);
-	}
-	return true;
-}
-
-bool Extract(const Path &input, const Path &output, const ProgressFunc &progress, std::string *error, bool *cancelled) {
-	*cancelled = false;
-	if (File::Exists(output)) {
-		*error = "Output file already exists";
+	if (!out.WriteAt(0, header, sizeof(header)) || !out.WriteAt(sizeof(header), index.data(), index.size() * sizeof(u32_le))) {
+		*error = "Could not write the output file";
 		return false;
 	}
-	Source src;
-	if (!src.Open(input, error)) {
+	if (!out.Finish(error)) {
 		return false;
-	}
-	FILE *f = File::OpenCFile(output, "wb");
-	if (!f) {
-		*error = "Could not create the output file";
-		return false;
-	}
-
-	const uint32_t numSectors = src.device->GetNumBlocks();
-	const uint32_t batch = (uint32_t)(BATCH_BYTES / SECTOR_SIZE);
-	std::vector<u8> buffer((size_t)batch * SECTOR_SIZE);
-	for (uint32_t first = 0; first < numSectors; first += batch) {
-		if (progress && !progress((float)first / (float)numSectors)) {
-			*cancelled = true;
-			return Fail(f, output, error, "Cancelled");
-		}
-		const uint32_t count = std::min(batch, numSectors - first);
-		if (!src.device->ReadBlocks(first, (int)count, buffer.data())) {
-			return Fail(f, output, error, "Could not read the game");
-		}
-		if (!WriteAll(f, buffer.data(), (size_t)count * SECTOR_SIZE)) {
-			return Fail(f, output, error, "Could not write the output file");
-		}
-	}
-	if (fclose(f) != 0) {
-		f = nullptr;
-		return Fail(f, output, error, "Could not write the output file");
 	}
 	if (progress) {
 		progress(1.0f);
