@@ -72,6 +72,71 @@ add_library(libdeflate STATIC
 	libdeflate/lib/utils.c
 )
 
+# libFLAC, for CHD's FLAC codec (UI/CHDCompress.cpp). Configured like CHDmodern builds it.
+add_library(flac STATIC
+	flac/src/libFLAC/bitmath.c
+	flac/src/libFLAC/bitreader.c
+	flac/src/libFLAC/bitwriter.c
+	flac/src/libFLAC/cpu.c
+	flac/src/libFLAC/crc.c
+	flac/src/libFLAC/fixed.c
+	flac/src/libFLAC/fixed_intrin_avx2.c
+	flac/src/libFLAC/fixed_intrin_sse2.c
+	flac/src/libFLAC/fixed_intrin_sse42.c
+	flac/src/libFLAC/fixed_intrin_ssse3.c
+	flac/src/libFLAC/float.c
+	flac/src/libFLAC/format.c
+	flac/src/libFLAC/lpc.c
+	flac/src/libFLAC/lpc_intrin_avx2.c
+	flac/src/libFLAC/lpc_intrin_fma.c
+	flac/src/libFLAC/lpc_intrin_neon.c
+	flac/src/libFLAC/lpc_intrin_sse2.c
+	flac/src/libFLAC/lpc_intrin_sse41.c
+	flac/src/libFLAC/md5.c
+	flac/src/libFLAC/memory.c
+	flac/src/libFLAC/stream_decoder.c
+	flac/src/libFLAC/stream_encoder.c
+	flac/src/libFLAC/stream_encoder_framing.c
+	flac/src/libFLAC/stream_encoder_intrin_avx2.c
+	flac/src/libFLAC/stream_encoder_intrin_sse2.c
+	flac/src/libFLAC/stream_encoder_intrin_ssse3.c
+	flac/src/libFLAC/window.c
+)
+if(WIN32)
+	target_sources(flac PRIVATE flac/src/share/win_utf8_io/win_utf8_io.c)
+endif()
+target_include_directories(flac PUBLIC flac/include PRIVATE flac/src/libFLAC/include)
+target_compile_definitions(flac
+	PUBLIC FLAC__NO_DLL
+	PRIVATE
+		NDEBUG HAVE_CONFIG_H OGG_FOUND=0 FLAC__HAS_OGG=0 HAVE_LROUND=1
+		HAVE_INTTYPES_H HAVE_STDBOOL_H HAVE_STDINT_H HAVE_STDIO_H HAVE_STDLIB_H HAVE_STRING_H
+		CPU_IS_BIG_ENDIAN=0 CPU_IS_LITTLE_ENDIAN=1 WORDS_BIGENDIAN=0
+		# Before API 24, bionic hides fseeko/ftello with _FILE_OFFSET_BITS=64 on 32-bit ABIs. Only
+		# the stream API is used, never FLAC's file I/O.
+		$<$<NOT:$<OR:$<C_COMPILER_ID:MSVC>,$<PLATFORM_ID:Android>>>:HAVE_FSEEKO _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE>
+		$<$<PLATFORM_ID:Darwin,iOS>:FLAC__SYS_DARWIN>
+		$<$<PLATFORM_ID:Linux,Android>:FLAC__SYS_LINUX>)
+if(NOT MSVC)
+	target_link_libraries(flac m)
+endif()
+
+# iPBP's conversion core, for the PBP presets (UI/PBPCompress.cpp).
+add_library(ipbp STATIC
+	ipbp/src/ipbp_util.cpp
+	ipbp/src/convert.cpp
+	ipbp/src/crypto/aes.cpp
+	ipbp/src/crypto/ecdsa.cpp
+	ipbp/src/crypto/sha1.cpp
+	ipbp/src/psp/amctrl.cpp
+	ipbp/src/psp/iso9660.cpp
+	ipbp/src/psp/lzrc.cpp
+	ipbp/src/psp/sfo.cpp
+)
+if(WIN32)
+	target_compile_definitions(ipbp PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 set(aemu_postoffice_client_obj
 	aemu_postoffice/client/postoffice.c
 	aemu_postoffice/client/postoffice_mem_stdc.c
@@ -118,6 +183,15 @@ endif()
 
 if(NOT USE_SYSTEM_LIBCHDR)
 	add_subdirectory(libchdr-build)
+else()
+	# The CHD writer's LZMA encoder (UI/CHDCompress.cpp), which the bundled libchdr has otherwise.
+	add_library(lzma_encoder STATIC
+		libchdr/deps/lzma-24.05/src/CpuArch.c
+		libchdr/deps/lzma-24.05/src/LzFind.c
+		libchdr/deps/lzma-24.05/src/LzmaEnc.c
+	)
+	target_include_directories(lzma_encoder PRIVATE libchdr/deps/lzma-24.05/include)
+	target_compile_definitions(lzma_encoder PRIVATE Z7_ST)
 endif()
 
 if(BUILD_BUNDLED_FFMPEG)
