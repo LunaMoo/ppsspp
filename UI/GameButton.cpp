@@ -94,6 +94,7 @@ static ImageID ChooseGameIcon(const std::shared_ptr<GameInfo> &ginfo) {
 
 	case IdentifiedFileType::PSP_ISO:
 	case IdentifiedFileType::PSP_ISO_NP:
+	case IdentifiedFileType::ZARCHIVE:
 		return ImageID("I_APP");  // This will practically always be replaced by a real icon.
 
 	default:

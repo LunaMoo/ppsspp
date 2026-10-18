@@ -718,6 +718,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/FileLoaders/RamCachingFileLoader.cpp \
   $(SRC)/Core/FileLoaders/RetryingFileLoader.cpp \
   $(SRC)/Core/FileLoaders/ZipFileLoader.cpp \
+  $(SRC)/Core/FileLoaders/ZArchiveFileLoader.cpp \
   $(SRC)/Core/MemFault.cpp \
   $(SRC)/Core/MemMap.cpp \
   $(SRC)/Core/MemMapFunctions.cpp \
@@ -900,6 +901,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/FileSystems/MetaFileSystem.cpp \
   $(SRC)/Core/FileSystems/DirectoryFileSystem.cpp \
   $(SRC)/Core/FileSystems/VirtualDiscFileSystem.cpp \
+  $(SRC)/Core/FileSystems/ZArchiveFileSystem.cpp \
   $(SRC)/Core/FileSystems/tlzrc.cpp \
   $(SRC)/Core/MIPS/JitCommon/JitCommon.cpp \
   $(SRC)/Core/MIPS/JitCommon/JitProfiler.cpp \

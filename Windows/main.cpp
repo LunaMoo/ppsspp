@@ -643,7 +643,7 @@ static std::wstring FinalizeFilter(std::wstring filter) {
 static std::wstring MakeWindowsFilter(BrowseFileType type) {
 	switch (type) {
 	case BrowseFileType::BOOTABLE:
-		return FinalizeFilter(L"All supported file types (*.iso *.cso *.chd *.pbp *.elf *.prx *.zip *.ppdmp *.cue *.ccd *.mds *.mdf *.bin *.img)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.prx;*.zip;*.ppdmp;*.cue;*.ccd;*.mds;*.mdf;*.bin;*.img|PSP ROMs (*.iso *.cso *.chd *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.prx|PS1 disc images (*.cue *.ccd *.mds *.mdf *.chd *.bin *.img *.iso *.pbp)|*.cue;*.ccd;*.mds;*.mdf;*.chd;*.bin;*.img;*.iso;*.pbp|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||");
+		return FinalizeFilter(L"All supported file types (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx *.zip *.ppdmp *.cue *.ccd *.mds *.mdf *.bin *.img)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx;*.zip;*.ppdmp;*.cue;*.ccd;*.mds;*.mdf;*.bin;*.img|PSP ROMs (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx|PS1 disc images (*.cue *.ccd *.mds *.mdf *.chd *.bin *.img *.iso *.pbp)|*.cue;*.ccd;*.mds;*.mdf;*.chd;*.bin;*.img;*.iso;*.pbp|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||");
 	case BrowseFileType::SAVE_STATE:
 		return FinalizeFilter(L"Save state files (*.ppst)|*.ppst|All files (*.*)|*.*||");
 	case BrowseFileType::INI:

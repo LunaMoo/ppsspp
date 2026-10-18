@@ -553,7 +553,7 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 		std::vector<std::string> supportedExtensions = {};
 		switch ((BrowseFileType)param3) {
 		case BrowseFileType::BOOTABLE:
-			supportedExtensions = { ".cso", ".iso", ".chd", ".elf", ".pbp", ".zip", ".prx", ".bin", ".cue", ".ccd", ".mds", ".mdf", ".img" };
+			supportedExtensions = { ".cso", ".iso", ".chd", ".zar", ".elf", ".pbp", ".zip", ".prx", ".bin", ".cue", ".ccd", ".mds", ".mdf", ".img" };
 			break;
 		case BrowseFileType::SAVE_STATE:
 			supportedExtensions = { ".ppst" };

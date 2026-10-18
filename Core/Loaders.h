@@ -60,6 +60,10 @@ enum class IdentifiedFileType {
 
 	PPSSPP_GE_DUMP,
 
+	// A ZArchive (.zar), see Core/FileLoaders/ZArchiveFileLoader.h. ResolveFileLoaderTarget resolves
+	// it to the game inside, so this is only seen when that fails, or when just identifying.
+	ZARCHIVE,
+
 	UNKNOWN,
 };
 
@@ -140,6 +144,9 @@ public:
 	size_t ReadAt(s64 absolutePos, size_t bytes, void *data, Flags flags = Flags::NONE) override {
 		return backend_->ReadAt(absolutePos, bytes, data, flags);
 	}
+	FileLoader *Backend() const {
+		return backend_;
+	}
 	FileLoader *Steal() {
 		FileLoader *backend = backend_;
 		backend_ = nullptr;
@@ -176,6 +183,11 @@ u32 DetectUmdDiscType(FileLoader *fileLoader);
 // Whether the image's PSP_GAME has an actual executable. The EUR Video Demo Disc lists a game
 // (UMD_DATA.BIN says GVA) whose EBOOT.BIN and BOOT.BIN are all zeroes.
 bool UmdHasBootableGame(FileLoader *fileLoader);
+// For a game started from a ZArchive (.zar): the archive paths of its discs, and the index of the one
+// in the drive (-1 if none of them). Returns false if the running game isn't from an archive.
+bool GetRunningArchiveDiscs(std::vector<std::string> *discs, int *currentDisc);
+// Like UmdReplace, but switches to another disc from the same ZArchive.
+bool UmdReplaceArchiveDisc(int discIndex, FileLoader **fileLoader, std::string &error);
 
 enum class ArchiveType {
 	ZIP,

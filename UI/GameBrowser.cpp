@@ -556,7 +556,7 @@ void GameBrowser::Refresh() {
 	} else if (!listingPending_) {
 		const bool umdsOnly = browseFlags_ & BrowseFlags::UMDS_ONLY;
 		std::vector<File::FileInfo> fileInfo;
-		path_.GetListing(fileInfo, umdsOnly ? "iso:cso:chd:pbp:" : "iso:cso:chd:pbp:elf:prx:ppdmp:cue:ccd:mds:bin:img:");
+		path_.GetListing(fileInfo, umdsOnly ? "iso:cso:chd:pbp:" : "iso:cso:chd:zar:pbp:elf:prx:ppdmp:cue:ccd:mds:bin:img:");
 		// PS1 discs: a .bin or .img shows up as its cue sheet or .ccd, when it has one.
 		RemoveDescribedDiscImages(&fileInfo);
 		// Drives and servers aren't games, and probing a server that's gone away can take seconds.

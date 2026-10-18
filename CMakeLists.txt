@@ -1394,6 +1394,7 @@ if(UNITTEST)
 		unittest/TestVFS.cpp
 		unittest/TestZipSlip.cpp
 		unittest/TestPS1Eboot.cpp
+		unittest/TestZArchive.cpp
 		unittest/TestLzrc.cpp
 		unittest/TestKirk.cpp
 		unittest/TestCwCheat.cpp
