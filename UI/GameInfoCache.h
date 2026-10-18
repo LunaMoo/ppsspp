@@ -19,6 +19,7 @@
 
 #include <ctime>
 #include <string>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -202,6 +203,11 @@ public:
 
 	std::string errorString;
 
+	// For a ZArchive: the archive paths of its discs, and which of them the info is about (the one it
+	// boots from, see RememberZArchiveDisc). Empty and -1 for anything else. Use under lock.
+	std::vector<std::string> archiveDiscs;
+	int archiveDisc = -1;
+
 protected:
 	ParamSFOData paramSFO;
 	// Note: this can change while loading, use GetTitle().
@@ -226,6 +232,8 @@ public:
 	// Cancels in-flight loads and drops everything, textures included. Main thread only.
 	void Clear();
 	void PurgeType(IdentifiedFileType fileType);
+	// Forgets everything about one game, so it's loaded again. Main thread only.
+	void Purge(const Path &gamePath);
 
 	// All data in GameInfo including icon.texture may be zero the first time you call this
 	// but filled in later asynchronously in the background. So keep calling this,
@@ -244,6 +252,7 @@ public:
 
 private:
 	void Shutdown();
+	void PurgeIf(const std::function<bool(const GameInfo &)> &shouldPurge);
 
 	// Maps ISO path to info. Need to use shared_ptr as we can return these pointers - 
 	// and if they get destructed while being in use, that's bad.
@@ -257,3 +266,9 @@ extern GameInfoCache *g_gameInfoCache;
 // Whether a folder in PSP/SAVEDATA holds data a game installed (or downloaded) there, rather than a save.
 // Games write those files with sceIo rather than the savedata utility, so PARAM.SFO's file list leaves them out.
 bool IsInstalledGameData(const Path &saveDir);
+
+// The name to show for a disc of a ZArchive: "Disc 2" for "Disc 2.iso".
+std::string ArchiveDiscName(std::string_view disc);
+// Call after changing which disc of a ZArchive is current (see RememberZArchiveDisc), so that
+// everything shows that disc. Main thread only.
+void OnArchiveDiscChanged(const Path &archivePath);
