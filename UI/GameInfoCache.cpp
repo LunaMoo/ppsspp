@@ -34,6 +34,7 @@
 #include "Common/StringUtils.h"
 #include "Common/TimeUtil.h"
 #include "Core/FileSystems/ISOFileSystem.h"
+#include "Core/FileLoaders/ZArchiveFileLoader.h"
 #include "Core/FileSystems/DirectoryFileSystem.h"
 #include "Core/FileSystems/VirtualDiscFileSystem.h"
 #include "Core/HLE/sceUtility.h"
@@ -113,6 +114,7 @@ bool GameInfo::Delete() {
 	switch (fileType) {
 	case IdentifiedFileType::PSP_ISO:
 	case IdentifiedFileType::PSP_ISO_NP:
+	case IdentifiedFileType::ZARCHIVE:
 		{
 			// Just delete the one file (TODO: handle two-disk games as well somehow).
 			// Also remove from recent files.
@@ -204,6 +206,17 @@ u64 GameInfo::GetSizeUncompressedInBytes() {
 		return File::ComputeRecursiveDirectorySize(ResolvePBPDirectory(filePath_));
 	case IdentifiedFileType::PSP_DISC_DIRECTORY:
 		return File::ComputeRecursiveDirectorySize(GetFileLoader()->GetPath());
+	case IdentifiedFileType::ZARCHIVE:
+	{
+		// Everything in it, decompressed.
+		FileLoader *archiveLoader = ConstructFileLoader(filePath_);
+		std::shared_ptr<ZArchive> archive = ZArchive::Open(archiveLoader, nullptr);
+		if (!archive) {
+			delete archiveLoader;
+			return GetFileLoader()->FileSize();
+		}
+		return archive->TotalFileSize();
+	}
 	default:
 	{
 		std::string errorString;
@@ -594,11 +607,27 @@ public:
 			fileType = info_->fileType;
 		}
 
-		switch (fileType) {
+		// For a ZArchive, describe the game inside. info_->fileType stays ZARCHIVE, it's still the
+		// archive that gets booted, deleted and so on.
+		IdentifiedFileType contentType = fileType;
+		std::shared_ptr<FileLoader> contentLoader = info_->GetFileLoader();
+		const bool fromArchive = fileType == IdentifiedFileType::ZARCHIVE;
+		if (fromArchive) {
+			FileLoader *archiveLoader = ConstructFileLoader(gamePath_);
+			FileLoader *target = OpenZArchiveBootTarget(archiveLoader, 0, &errorString);
+			if (target) {
+				contentLoader.reset(target);
+				contentType = Identify_File(target, &errorString);
+			} else {
+				delete archiveLoader;
+			}
+		}
+
+		switch (contentType) {
 		case IdentifiedFileType::PSP_PBP:
 		case IdentifiedFileType::PSP_PBP_DIRECTORY:
 			{
-				auto pbpLoader = info_->GetFileLoader();
+				auto pbpLoader = contentLoader;
 				if (fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) {
 					Path ebootPath = ResolvePBPFile(gamePath_);
 					if (ebootPath != gamePath_) {
@@ -632,12 +661,12 @@ public:
 					if (pbp.GetSubFile(PBP_PARAM_SFO, &sfoData)) {
 						std::lock_guard<std::mutex> lock(info_->lock);
 						info_->paramSFO.ReadSFO(sfoData);
-						info_->ParseParamSFO(fileType);
+						info_->ParseParamSFO(contentType);
 
-						// Assuming PSP_PBP_DIRECTORY without ID or with disc_total < 1 in GAME dir must be homebrew
+						// Assuming PSP_PBP_DIRECTORY without ID or with disc_total < 1 in GAME dir must be homebrew.
+						// From an archive, it's always from PSP/GAME.
 						if ((info_->id.empty() || !info_->disc_total)
-							&& gamePath_.FilePathContainsNoCase("PSP/GAME/")
-							&& fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) {
+							&& ((gamePath_.FilePathContainsNoCase("PSP/GAME/") && fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) || fromArchive)) {
 							info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 							info_->id_version = info_->id + "_1.00";
 							info_->region = GameRegion::HOMEBREW; // Homebrew
@@ -842,7 +871,7 @@ handleELF:
 				// Let's assume it's an ISO.
 				// TODO: This will currently read in the whole directory tree. Not really necessary for just a
 				// few files.
-				auto fl = info_->GetFileLoader();
+				auto fl = contentLoader;
 				if (!fl) {
 					// BAD! Can't win here.
 					ERROR_LOG(Log::Loader, "Failed getting game info for ISO %s", info_->GetFilePath().ToVisualString().c_str());
@@ -850,7 +879,7 @@ handleELF:
 					info_->MarkReadyNoLock(flags_);
 					return;
 				}
-				std::shared_ptr<BlockDevice> bd(ConstructBlockDevice(info_->GetFileLoader().get(), &errorString));
+				std::shared_ptr<BlockDevice> bd(ConstructBlockDevice(fl.get(), &errorString));
 				if (!bd) {
 					ERROR_LOG(Log::Loader, "Failed constructing block device for ISO %s: %s", info_->GetFilePath().ToVisualString().c_str(), errorString.c_str());
 					std::unique_lock<std::mutex> lock(info_->lock);
@@ -867,7 +896,7 @@ handleELF:
 						{
 							std::lock_guard<std::mutex> lock(info_->lock);
 							info_->paramSFO.ReadSFO((const u8 *)paramSFOcontents.data(), paramSFOcontents.size());
-							info_->ParseParamSFO(fileType);
+							info_->ParseParamSFO(contentType);
 
 							// quick-update the info while we have the lock, so we don't need to wait for the image load to display the title.
 							info_->MarkReadyNoLock(GameInfoFlags::PARAM_SFO);
@@ -973,6 +1002,7 @@ handleELF:
 			case IdentifiedFileType::PSP_DISC_DIRECTORY:
 			case IdentifiedFileType::PSP_PBP:
 			case IdentifiedFileType::PSP_PBP_DIRECTORY:
+			case IdentifiedFileType::ZARCHIVE:
 			{
 				std::lock_guard<std::mutex> lock(info_->lock);
 				info_->saveDataSize = info_->GetGameSavedataSizeInBytes();

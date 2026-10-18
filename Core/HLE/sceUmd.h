@@ -40,6 +40,8 @@ void __UmdInit();
 void __UmdDoState(PointerWrap &p);
 
 void __UmdReplace(const Path &filepath);
+// Switches to another disc of the ZArchive the game was started from, see GetRunningArchiveDiscs.
+void __UmdReplaceArchiveDisc(int discIndex);
 bool getUMDReplacePermit();
 
 void Register_sceUmdUser();
