@@ -62,6 +62,8 @@ public:
 	void Save(Section *section);
 
 	bool GetPlayedTimeString(std::string_view, std::string *str) const;
+	// The total of several games, like the discs of a multi-disc game. False if none was ever played.
+	bool GetPlayedTimeString(const std::vector<std::string> &gameIds, std::string *str) const;
 
 private:
 	std::map<std::string, PlayTime, std::less<>> tracker_;
@@ -840,6 +842,12 @@ public:
 	void UnloadGameConfig();
 
 	bool HasGameConfig(std::string_view gameId);
+
+	// Makes the discs of a multi-disc game (by their IDs, the first disc's first) share the first
+	// disc's game config. For ZArchives, where the discs are known to be one game. Thread safe.
+	void SetGameConfigAliases(const std::vector<std::string> &discIds);
+	// The ID whose game config a game uses: its own, or that of the first disc of its game.
+	std::string GameConfigID(std::string_view gameId) const;
 	bool IsGameSpecific() const { return !gameId_.empty(); }
 	// False if the last Load() couldn't read the ini (missing, or the memory stick isn't reachable) and fell back to defaults.
 	bool LoadedFromFile() const { return loadedFromFile_; }
