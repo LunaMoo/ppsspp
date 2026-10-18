@@ -1276,6 +1276,7 @@ ifeq ($(UNITTEST),1)
     $(SRC)/unittest/TestGEMath.cpp \
     $(SRC)/unittest/TestZipSlip.cpp \
     $(SRC)/unittest/TestPS1Eboot.cpp \
+    $(SRC)/unittest/TestZArchive.cpp \
     $(SRC)/unittest/UnitTest.cpp
 
   include $(BUILD_EXECUTABLE)
