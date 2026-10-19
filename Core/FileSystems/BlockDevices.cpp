@@ -979,15 +979,17 @@ bool NPDRMDemoBlockDevice::ReadBlock(int blockNumber, u8 *outPtr, bool uncached)
 		return false;
 	}
 
+	// currentBlock_ is -1 until a block has been read in.
 	int lba = blockNumber - currentBlock_;
-	if (lba >= 0 && lba < blockLBAs_){
+	if (currentBlock_ >= 0 && lba >= 0 && lba < blockLBAs_){
 		memcpy(outPtr, blockBuf_ + lba*2048, 2048);
 		return true;
 	}
 
 	int block = blockNumber / blockLBAs_;
 	lba = blockNumber % blockLBAs_;
-	currentBlock_ = block * blockLBAs_;
+	// Only valid once the block is read in.
+	currentBlock_ = -1;
 
 	// blockNumber comes from the caller (ultimately from guest-controlled reads, e.g.
 	// via /sce_lbn.../_size... on a raw sector open) and isn't otherwise guaranteed to be
@@ -1047,6 +1049,7 @@ bool NPDRMDemoBlockDevice::ReadBlock(int blockNumber, u8 *outPtr, bool uncached)
 		}
 	}
 
+	currentBlock_ = block * blockLBAs_;
 	memcpy(outPtr, blockBuf_+lba*2048, 2048);
 	return true;
 }
