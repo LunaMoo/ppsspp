@@ -19,6 +19,9 @@
     <ClCompile Include="libchdr\deps\lzma-26.02\src\LzmaDec.c">
       <Filter>LZMA</Filter>
     </ClCompile>
+    <ClCompile Include="lzma-encoder\lzma_encoder.c">
+      <Filter>LZMA</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="libchdr\include\dr_libs\dr_flac.h" />

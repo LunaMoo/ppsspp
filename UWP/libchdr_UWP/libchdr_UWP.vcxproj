@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\ext\libchdr\deps\lzma-26.02\src\LzmaDec.c" />
+    <ClCompile Include="..\..\ext\lzma-encoder\lzma_encoder.c" />
     <ClCompile Include="..\..\ext\libchdr\src\libchdr_bitstream.c" />
     <ClCompile Include="..\..\ext\libchdr\src\libchdr_cdrom.c" />
     <ClCompile Include="..\..\ext\libchdr\src\libchdr_chd.c" />

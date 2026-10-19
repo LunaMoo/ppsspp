@@ -214,16 +214,10 @@ endif()
 
 if(NOT USE_SYSTEM_LIBCHDR)
 	add_subdirectory(libchdr-build)
-else()
-	# The CHD writer's LZMA encoder (Core/FileSystems/CHDCompress.cpp), which the bundled libchdr has otherwise.
-	add_library(lzma_encoder STATIC
-		libchdr/deps/lzma-24.05/src/CpuArch.c
-		libchdr/deps/lzma-24.05/src/LzFind.c
-		libchdr/deps/lzma-24.05/src/LzmaEnc.c
-	)
-	target_include_directories(lzma_encoder PRIVATE libchdr/deps/lzma-24.05/include)
-	target_compile_definitions(lzma_encoder PRIVATE Z7_ST)
 endif()
+
+# The CHD writer's LZMA encoder (Core/FileSystems/CHDCompress.cpp). libchdr only has the decoder.
+add_library(lzma_encoder STATIC lzma-encoder/lzma_encoder.c)
 
 if(BUILD_BUNDLED_FFMPEG)
 	add_subdirectory(ffmpeg-build)

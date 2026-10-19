@@ -28,6 +28,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="libchdr\deps\lzma-26.02\src\LzmaDec.c" />
+    <ClCompile Include="lzma-encoder\lzma_encoder.c" />
     <ClCompile Include="libchdr\src\libchdr_bitstream.c" />
     <ClCompile Include="libchdr\src\libchdr_cdrom.c" />
     <ClCompile Include="libchdr\src\libchdr_chd.c" />

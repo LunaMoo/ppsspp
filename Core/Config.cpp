@@ -453,7 +453,10 @@ static constexpr ConfigSetting generalSettings[] = {
 	ConfigSetting("CacheFullIsoInRam", SETTING(g_Config, bCacheFullIsoInRam), false, CfgFlag::PER_GAME)
 		.Label(I18NCat::SYSTEM, "Cache full ISO in RAM"),
 	ConfigSetting("AutoUpgradeFirmware", SETTING(g_Config, bAutoUpgradeFirmware), true, CfgFlag::DEFAULT),
+	ConfigSetting("PackFormat", SETTING(g_Config, iPackFormat), 0, CfgFlag::DEFAULT),
 	ConfigSetting("CSOPreset", SETTING(g_Config, iCSOPreset), 0, CfgFlag::DEFAULT),
+	ConfigSetting("CHDPreset", SETTING(g_Config, iCHDPreset), 1, CfgFlag::DEFAULT),
+	ConfigSetting("PBPPreset", SETTING(g_Config, iPBPPreset), 1, CfgFlag::DEFAULT),
 	ConfigSetting("PackKeepOriginal", SETTING(g_Config, bPackKeepOriginal), false, CfgFlag::DEFAULT),
 	ConfigSetting("RemoteISOPort", SETTING(g_Config, iRemoteISOPort), 0, CfgFlag::DEFAULT)
 		.Label(I18NCat::REMOTEISO, "Local Server Port").Range(0, 65535, 100),

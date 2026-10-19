@@ -28,5 +28,8 @@
     <ClCompile Include="..\..\ext\libchdr\deps\lzma-26.02\src\LzmaDec.c">
       <Filter>lzma</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\ext\lzma-encoder\lzma_encoder.c">
+      <Filter>lzma</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
