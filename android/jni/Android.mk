@@ -554,6 +554,15 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/ext/xxhash.c \
   $(SRC)/ext/libdeflate/lib/deflate_compress.c \
   $(SRC)/ext/libdeflate/lib/utils.c \
+  $(SRC)/ext/ipbp/src/ipbp_util.cpp \
+  $(SRC)/ext/ipbp/src/convert.cpp \
+  $(SRC)/ext/ipbp/src/crypto/aes.cpp \
+  $(SRC)/ext/ipbp/src/crypto/ecdsa.cpp \
+  $(SRC)/ext/ipbp/src/crypto/sha1.cpp \
+  $(SRC)/ext/ipbp/src/psp/amctrl.cpp \
+  $(SRC)/ext/ipbp/src/psp/iso9660.cpp \
+  $(SRC)/ext/ipbp/src/psp/lzrc.cpp \
+  $(SRC)/ext/ipbp/src/psp/sfo.cpp \
   $(SRC)/Core/MIPS/MIPS.cpp.arm \
   $(SRC)/Core/MIPS/MIPSAnalyst.cpp \
   $(SRC)/Core/MIPS/MIPSDis.cpp \
@@ -840,7 +849,10 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/scePauth.cpp \
   $(SRC)/Core/FileSystems/BlobFileSystem.cpp \
   $(SRC)/Core/FileSystems/BlockDevices.cpp \
+  $(SRC)/Core/FileSystems/CHDCompress.cpp \
   $(SRC)/Core/FileSystems/CSOCompress.cpp \
+  $(SRC)/Core/FileSystems/DiscImageIO.cpp \
+  $(SRC)/Core/FileSystems/PBPCompress.cpp \
   $(SRC)/Core/FileSystems/ISOFileSystem.cpp \
   $(SRC)/Core/FileSystems/FileSystem.cpp \
   $(SRC)/Core/FileSystems/MetaFileSystem.cpp \
@@ -981,7 +993,50 @@ include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
-LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd oboe
+
+# libFLAC, for CHD's FLAC codec (Core/FileSystems/CHDCompress.cpp), configured like CHDmodern builds it.
+include $(CLEAR_VARS)
+include $(LOCAL_PATH)/Locals.mk
+
+LOCAL_MODULE := ppsspp_flac
+LOCAL_CFLAGS += -DFLAC__NO_DLL -DNDEBUG -DHAVE_CONFIG_H -DOGG_FOUND=0 -DFLAC__HAS_OGG=0 -DHAVE_LROUND=1 \
+  -DHAVE_INTTYPES_H -DHAVE_STDBOOL_H -DHAVE_STDINT_H -DHAVE_STDIO_H -DHAVE_STDLIB_H -DHAVE_STRING_H \
+  -DCPU_IS_BIG_ENDIAN=0 -DCPU_IS_LITTLE_ENDIAN=1 -DWORDS_BIGENDIAN=0 -DFLAC__SYS_LINUX -w
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC)/ext/flac/include $(LOCAL_PATH)/$(SRC)/ext/flac/src/libFLAC/include
+LOCAL_SRC_FILES := \
+  $(SRC)/ext/flac/src/libFLAC/bitmath.c \
+  $(SRC)/ext/flac/src/libFLAC/bitreader.c \
+  $(SRC)/ext/flac/src/libFLAC/bitwriter.c \
+  $(SRC)/ext/flac/src/libFLAC/cpu.c \
+  $(SRC)/ext/flac/src/libFLAC/crc.c \
+  $(SRC)/ext/flac/src/libFLAC/fixed.c \
+  $(SRC)/ext/flac/src/libFLAC/fixed_intrin_avx2.c \
+  $(SRC)/ext/flac/src/libFLAC/fixed_intrin_sse2.c \
+  $(SRC)/ext/flac/src/libFLAC/fixed_intrin_sse42.c \
+  $(SRC)/ext/flac/src/libFLAC/fixed_intrin_ssse3.c \
+  $(SRC)/ext/flac/src/libFLAC/float.c \
+  $(SRC)/ext/flac/src/libFLAC/format.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc_intrin_avx2.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc_intrin_fma.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc_intrin_neon.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc_intrin_sse2.c \
+  $(SRC)/ext/flac/src/libFLAC/lpc_intrin_sse41.c \
+  $(SRC)/ext/flac/src/libFLAC/md5.c \
+  $(SRC)/ext/flac/src/libFLAC/memory.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_decoder.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_encoder.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_encoder_framing.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_encoder_intrin_avx2.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_encoder_intrin_sse2.c \
+  $(SRC)/ext/flac/src/libFLAC/stream_encoder_intrin_ssse3.c \
+  $(SRC)/ext/flac/src/libFLAC/window.c
+
+include $(BUILD_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+include $(LOCAL_PATH)/Locals.mk
+LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd ppsspp_flac oboe
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC)/ext/oboe/include
 
 # These are the files just for ppsspp_jni
@@ -1060,7 +1115,7 @@ endif
 ifeq ($(HEADLESS),1)
   include $(CLEAR_VARS)
   include $(LOCAL_PATH)/Locals.mk
-  LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd
+  LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd ppsspp_flac
 
   # Android 5.0 requires PIE for executables.  Only supported on 4.1+, but this is testing anyway.
   LOCAL_CFLAGS += -fPIE
@@ -1083,7 +1138,7 @@ endif
 ifeq ($(UNITTEST),1)
   include $(CLEAR_VARS)
   include $(LOCAL_PATH)/Locals.mk
-  LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd
+  LOCAL_STATIC_LIBRARIES += ppsspp_common ppsspp_core libarmips libzstd ppsspp_flac
 
   # Android 5.0 requires PIE for executables.  Only supported on 4.1+, but this is testing anyway.
   LOCAL_CFLAGS += -fPIE

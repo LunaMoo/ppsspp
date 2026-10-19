@@ -25,8 +25,9 @@
 #include "Common/UI/PopupScreens.h"
 #include "Core/FileSystems/CSOCompress.h"
 
-// Compresses the game shown on the game screen as CSO, or extracts or recompresses it, in the
-// background (Core/FileSystems/CSOCompress.h does the work). One game at a time.
+// Compresses the game shown on the game screen as CSO, CHD or PBP, or extracts or recompresses it,
+// in the background (Core/FileSystems/CSOCompress.h, CHDCompress.h and PBPCompress.h do the work).
+// One game at a time.
 namespace GamePacker {
 
 enum class Container {
@@ -41,15 +42,27 @@ enum class Container {
 // game, its EBOOT.PBP.
 Container DetectContainer(const Path &gamePath, Path *file);
 
+// What a game is compressed to. Stored in the config (iPackFormat).
+enum class Format {
+	CSO = 0,
+	CHD = 1,
+	PBP = 2,
+};
+
 struct Option {
 	bool toISO = false;  // Extract only.
-	CSOCompress::Preset preset = CSOCompress::Preset::Best;
+	Format format = Format::CSO;
+	int preset = 0;  // By format: CSOCompress::Preset, CHDCompress::Preset or PBPCompress::Preset.
 	std::string title;
 	std::string description;
 };
 
-// For an ISO the CSO presets, for anything else Extract to ISO first and then the presets.
+// For an ISO every format's presets, for anything else Extract to ISO first and then the presets.
 std::vector<Option> ListOptions(Container from);
+
+// The original can't be kept: a PSP/GAME/<folder> game recompressed as PBP, whose folder only
+// holds one EBOOT.PBP.
+bool MustReplace(const Path &gamePath, const Option &option);
 
 // Whether a pack can start now: no other job, and no game running.
 bool CanStart();
@@ -95,6 +108,7 @@ public:
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 
 protected:
+	bool FillVertical() const override { return options_.size() > 5; }
 	UI::Size PopupWidth() const override { return 600; }
 	void OnCompleted(DialogResult result) override;
 
@@ -104,6 +118,8 @@ private:
 	Path gamePath_;
 	std::vector<GamePacker::Option> options_;
 	std::vector<UI::View *> choices_;
+	UI::CheckBox *keepCheckBox_ = nullptr;
 	int selected_ = 0;
 	bool keepOriginal_ = false;
+	bool keepWanted_ = false;  // What was picked, for when an option that can't keep it is undone.
 };

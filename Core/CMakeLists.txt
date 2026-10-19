@@ -357,16 +357,22 @@ add_library(Core STATIC
 	FileSystems/BlobFileSystem.h
 	FileSystems/BlockDevices.cpp
 	FileSystems/BlockDevices.h
+	FileSystems/CHDCompress.cpp
+	FileSystems/CHDCompress.h
 	FileSystems/CSOCompress.cpp
 	FileSystems/CSOCompress.h
 	FileSystems/DirectoryFileSystem.cpp
 	FileSystems/DirectoryFileSystem.h
+	FileSystems/DiscImageIO.cpp
+	FileSystems/DiscImageIO.h
 	FileSystems/FileSystem.h
 	FileSystems/FileSystem.cpp
 	FileSystems/ISOFileSystem.cpp
 	FileSystems/ISOFileSystem.h
 	FileSystems/MetaFileSystem.cpp
 	FileSystems/MetaFileSystem.h
+	FileSystems/PBPCompress.cpp
+	FileSystems/PBPCompress.h
 	FileSystems/VirtualDiscFileSystem.cpp
 	FileSystems/VirtualDiscFileSystem.h
 	Font/PGF.cpp
@@ -715,8 +721,12 @@ endif()
 
 list(APPEND CoreExtraLibs armips)
 
-target_link_libraries(Core GPU Common chdr kirk cityhash sfmt19937 xbrz xxhash libdeflate rcheevos at3_standalone lua
+target_link_libraries(Core GPU Common chdr kirk cityhash sfmt19937 xbrz xxhash libdeflate flac ipbp rcheevos at3_standalone lua
 	aemu_postoffice_client ${CoreExtraLibs} ${CMAKE_DL_LIBS})
+if(USE_SYSTEM_LIBCHDR)
+	# The CHD writer's LZMA encoder.
+	target_link_libraries(Core lzma_encoder)
+endif()
 
 # Winsock
 if(WIN32)

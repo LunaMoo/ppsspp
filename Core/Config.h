@@ -252,7 +252,10 @@ public:
 	bool bCacheFullIsoInRam;
 	bool bAutoUpgradeFirmware;
 	// The game screen's "Compress game" (UI/GamePacker.h).
+	int iPackFormat;  // GamePacker::Format: 0 = CSO, 1 = CHD, 2 = PBP
 	int iCSOPreset;  // CSOCompress::Preset: 0 = Best, 1 = PSP Compatible
+	int iCHDPreset;  // CHDCompress::Preset: 0 = Large Hunk, 1 = Small Hunk, 2 = Quick Access
+	int iPBPPreset;  // PBPCompress::Preset: 0 = Max, 1 = PSP Compatible, 2 = Uncompressed
 	bool bPackKeepOriginal;
 	int iRemoteISOPort; // Also used for serving a local remote debugger.
 	std::string sLastRemoteISOServer;

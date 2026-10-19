@@ -585,8 +585,11 @@
     <ClCompile Include="FileLoaders\RamCachingFileLoader.cpp" />
     <ClCompile Include="FileLoaders\RetryingFileLoader.cpp" />
     <ClCompile Include="FileSystems\BlockDevices.cpp" />
+    <ClCompile Include="FileSystems\CHDCompress.cpp" />
     <ClCompile Include="FileSystems\CSOCompress.cpp" />
     <ClCompile Include="FileSystems\DirectoryFileSystem.cpp" />
+    <ClCompile Include="FileSystems\DiscImageIO.cpp" />
+    <ClCompile Include="FileSystems\PBPCompress.cpp" />
     <ClCompile Include="FileSystems\ISOFileSystem.cpp" />
     <ClCompile Include="FileSystems\FileSystem.cpp" />
     <ClCompile Include="FileSystems\MetaFileSystem.cpp" />
@@ -741,6 +744,158 @@
     <ClCompile Include="Util\PkgUnpack.cpp" />
     <ClCompile Include="..\ext\libdeflate\lib\deflate_compress.c" />
     <ClCompile Include="..\ext\libdeflate\lib\utils.c" />
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitmath.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitreader.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitwriter.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\cpu.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\crc.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_avx2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse42.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_ssse3.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\float.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\format.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_avx2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_fma.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_neon.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse41.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\md5.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\memory.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_decoder.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_framing.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_avx2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_sse2.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_ssse3.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\window.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\share\win_utf8_io\win_utf8_io.c">
+      <PreprocessorDefinitions>FLAC__NO_DLL;NDEBUG;HAVE_CONFIG_H;OGG_FOUND=0;FLAC__HAS_OGG=0;HAVE_LROUND=1;HAVE_INTTYPES_H;HAVE_STDBOOL_H;HAVE_STDINT_H;HAVE_STDIO_H;HAVE_STDLIB_H;HAVE_STRING_H;CPU_IS_BIG_ENDIAN=0;CPU_IS_LITTLE_ENDIAN=1;WORDS_BIGENDIAN=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\ext\flac\include;..\ext\flac\src\libFLAC\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\ipbp_util.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\convert.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\crypto\aes.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\crypto\ecdsa.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\crypto\sha1.cpp">
+      <!-- ext\sha1\sha1.cpp has the same object file name. -->
+      <ObjectFileName>$(IntDir)ipbp_sha1.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\amctrl.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\psp\iso9660.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\psp\lzrc.cpp" />
+    <ClCompile Include="..\ext\ipbp\src\psp\sfo.cpp" />
     <ClCompile Include="..\ext\xxhash.c">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">MaxSpeed</Optimization>
       <IntrinsicFunctions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</IntrinsicFunctions>
@@ -922,8 +1077,11 @@
     <ClInclude Include="FileLoaders\RamCachingFileLoader.h" />
     <ClInclude Include="FileLoaders\RetryingFileLoader.h" />
     <ClInclude Include="FileSystems\BlockDevices.h" />
+    <ClInclude Include="FileSystems\CHDCompress.h" />
     <ClInclude Include="FileSystems\CSOCompress.h" />
     <ClInclude Include="FileSystems\DirectoryFileSystem.h" />
+    <ClInclude Include="FileSystems\DiscImageIO.h" />
+    <ClInclude Include="FileSystems\PBPCompress.h" />
     <ClInclude Include="FileSystems\FileSystem.h" />
     <ClInclude Include="FileSystems\ISOFileSystem.h" />
     <ClInclude Include="FileSystems\MetaFileSystem.h" />
@@ -1065,6 +1223,15 @@
     <ClInclude Include="Util\PSARUnpack.h" />
     <ClInclude Include="Util\PkgUnpack.h" />
     <ClInclude Include="..\ext\libdeflate\libdeflate.h" />
+    <ClInclude Include="..\ext\ipbp\include\ipbp\ipbp.hpp" />
+    <ClInclude Include="..\ext\ipbp\src\util.h" />
+    <ClInclude Include="..\ext\ipbp\src\crypto\aes.h" />
+    <ClInclude Include="..\ext\ipbp\src\crypto\ecdsa.h" />
+    <ClInclude Include="..\ext\ipbp\src\crypto\sha1.h" />
+    <ClInclude Include="..\ext\ipbp\src\psp\amctrl.h" />
+    <ClInclude Include="..\ext\ipbp\src\psp\iso9660.h" />
+    <ClInclude Include="..\ext\ipbp\src\psp\lzrc.h" />
+    <ClInclude Include="..\ext\ipbp\src\psp\sfo.h" />
     <ClInclude Include="..\ext\libdeflate\common\common_defs.h" />
     <ClInclude Include="..\ext\libdeflate\common\compiler_gcc.h" />
     <ClInclude Include="..\ext\libdeflate\common\compiler_msc.h" />

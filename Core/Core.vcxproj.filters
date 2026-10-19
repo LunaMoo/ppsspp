@@ -85,6 +85,12 @@
     <Filter Include="Ext\libdeflate">
       <UniqueIdentifier>{5b0c7e1a-3d2f-4c8e-9a61-d4f0b2e7c913}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Ext\flac">
+      <UniqueIdentifier>{14324cca-257a-4b9b-b632-eac494920447}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Ext\ipbp">
+      <UniqueIdentifier>{3be096ca-af7a-4d2c-89c3-b745d36361d8}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Ext\libzip">
       <UniqueIdentifier>{0201ff27-4fa8-4cf3-bbb9-accfdc0c7046}</UniqueIdentifier>
     </Filter>
@@ -145,6 +151,15 @@
       <Filter>FileSystems</Filter>
     </ClCompile>
     <ClCompile Include="FileSystems\CSOCompress.cpp">
+      <Filter>FileSystems</Filter>
+    </ClCompile>
+    <ClCompile Include="FileSystems\CHDCompress.cpp">
+      <Filter>FileSystems</Filter>
+    </ClCompile>
+    <ClCompile Include="FileSystems\DiscImageIO.cpp">
+      <Filter>FileSystems</Filter>
+    </ClCompile>
+    <ClCompile Include="FileSystems\PBPCompress.cpp">
       <Filter>FileSystems</Filter>
     </ClCompile>
     <ClCompile Include="FileSystems\BlockDevices.cpp">
@@ -513,6 +528,117 @@
     </ClCompile>
     <ClCompile Include="..\ext\libdeflate\lib\utils.c">
       <Filter>Ext\libdeflate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitmath.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitreader.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\bitwriter.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\cpu.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\crc.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_avx2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_sse42.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\fixed_intrin_ssse3.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\float.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\format.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_avx2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_fma.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_neon.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\lpc_intrin_sse41.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\md5.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\memory.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_decoder.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_framing.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_avx2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_sse2.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\stream_encoder_intrin_ssse3.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\libFLAC\window.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\flac\src\share\win_utf8_io\win_utf8_io.c">
+      <Filter>Ext\flac</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\ipbp_util.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\convert.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\aes.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\ecdsa.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\crypto\sha1.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\amctrl.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\iso9660.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\lzrc.cpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\ipbp\src\psp\sfo.cpp">
+      <Filter>Ext\ipbp</Filter>
     </ClCompile>
     <ClCompile Include="..\ext\xxhash.c">
       <Filter>Ext</Filter>
@@ -1437,6 +1563,15 @@
     <ClInclude Include="FileSystems\CSOCompress.h">
       <Filter>FileSystems</Filter>
     </ClInclude>
+    <ClInclude Include="FileSystems\CHDCompress.h">
+      <Filter>FileSystems</Filter>
+    </ClInclude>
+    <ClInclude Include="FileSystems\DiscImageIO.h">
+      <Filter>FileSystems</Filter>
+    </ClInclude>
+    <ClInclude Include="FileSystems\PBPCompress.h">
+      <Filter>FileSystems</Filter>
+    </ClInclude>
     <ClInclude Include="FileSystems\BlockDevices.h">
       <Filter>FileSystems</Filter>
     </ClInclude>
@@ -1796,6 +1931,33 @@
     </ClInclude>
     <ClInclude Include="..\ext\libdeflate\libdeflate.h">
       <Filter>Ext\libdeflate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\include\ipbp\ipbp.hpp">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\util.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\aes.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\ecdsa.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\crypto\sha1.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\amctrl.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\iso9660.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\lzrc.h">
+      <Filter>Ext\ipbp</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\ipbp\src\psp\sfo.h">
+      <Filter>Ext\ipbp</Filter>
     </ClInclude>
     <ClInclude Include="..\ext\libdeflate\common\common_defs.h">
       <Filter>Ext\libdeflate</Filter>
