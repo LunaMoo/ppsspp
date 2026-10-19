@@ -961,6 +961,7 @@ void UmdReplaceScreen::CreateContentViews(UI::ViewGroup *parent) {
 				__UmdReplaceArchiveDisc(i);
 				g_Config.Save("UmdReplaceScreen::ArchiveDisc");
 				OnArchiveDiscChanged(PSP_CoreParameter().fileToStart);
+				g_BackgroundAudio.ReloadGame(PSP_CoreParameter().fileToStart);
 				TriggerFinish(DR_OK);
 			});
 		}
