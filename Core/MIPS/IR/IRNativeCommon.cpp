@@ -430,7 +430,6 @@ void IRNativeBackend::CompileIRInst(IRInst inst) {
 		CompIR_VecArith(inst);
 		break;
 
-	case IROp::Vec4Dot:
 	case IROp::Vec4VfpuDot:
 	case IROp::Vec4VfpuMultiDot:
 		CompIR_VecHoriz(inst);
@@ -904,6 +903,13 @@ bool IRNativeJit::CodeInRange(const u8 *ptr) const {
 
 const u8 *IRNativeJit::GetCodeBase() const {
 	return backend_->CodeBlock().GetBasePtr();
+}
+
+void IRNativeJit::GetStats(JitStats *stats) const {
+	IRJit::GetStats(stats);
+	const CodeBlockCommon &code = backend_->CodeBlock();
+	stats->codeUsed = code.GetOffset(code.GetCodePtr());
+	stats->codeSize = code.GetRegionSize();
 }
 
 u32 IRNativeJit::GetBlockShadowHookValue() const {

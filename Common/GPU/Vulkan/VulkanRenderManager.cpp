@@ -912,18 +912,10 @@ void VulkanRenderManager::ReportBadStateForDraw() {
 	ERROR_LOG_REPORT_ONCE(baddraw, Log::G3D, "Can't draw: %s%s. Step count: %d", cause1, cause2, (int)steps_.size());
 }
 
-int VulkanRenderManager::WaitForPipelines() {
+bool VulkanRenderManager::PipelinesPending() {
 	// Pipelines still in the queue, or taken off it but not yet made into tasks, aren't in flight yet.
-	while (true) {
-		{
-			std::unique_lock<std::mutex> lock(compileQueueMutex_);
-			if (compileQueue_.empty() && !compileScheduling_) {
-				break;
-			}
-		}
-		sleep_ms(2, "pipeline-queue-wait");
-	}
-	return CreateMultiPipelinesTask::WaitForAll();
+	std::unique_lock<std::mutex> lock(compileQueueMutex_);
+	return !compileQueue_.empty() || compileScheduling_ || CreateMultiPipelinesTask::tasksInFlight_ > 0;
 }
 
 VKRGraphicsPipeline *VulkanRenderManager::CreateGraphicsPipeline(VKRGraphicsPipelineDesc *desc, PipelineFlags pipelineFlags, uint32_t variantBitmask, VkSampleCountFlagBits sampleCount, bool cacheLoad, const char *tag) {
@@ -1440,6 +1432,16 @@ void VulkanRenderManager::CopyFramebuffer(VKRFramebuffer *src, VkRect2D srcRect,
 	_dbg_assert_msg_(dstPos.x + srcRect.extent.width <= (uint32_t)dst->width, "dstPos + extent x > width");
 	_dbg_assert_msg_(dstPos.y + srcRect.extent.height <= (uint32_t)dst->height, "dstPos + extent y > height");
 
+	if (aspectMask & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+		_dbg_assert_msg_(src->depth.image != VK_NULL_HANDLE, "%s", src->Tag());
+		_dbg_assert_msg_(dst->depth.image != VK_NULL_HANDLE, "%s", dst->Tag());
+
+		if (!src->depth.image || !dst->depth.image) {
+			// Something has gone wrong, but let's try to stumble along.
+			return;
+		}
+	}
+
 	VkImageLayout finalSrcLayoutBeforeCopy = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 	if (src == dst) {
 		// We only use the first loop before, and transition to VK_IMAGE_LAYOUT_GENERAL.
@@ -1855,10 +1857,6 @@ VKRPipelineLayout *VulkanRenderManager::CreatePipelineLayout(BindingType *bindin
 			bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 			bindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			break;
-		case BindingType::STORAGE_BUFFER_VERTEX:
-			bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			bindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-			break;
 		case BindingType::STORAGE_BUFFER_COMPUTE:
 			bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -2050,7 +2048,6 @@ void VKRPipelineLayout::FlushDescSets(VulkanContext *vulkan, int frame, QueuePro
 				writes[numWrites].pBufferInfo = nullptr;
 				numImages++;
 				break;
-			case BindingType::STORAGE_BUFFER_VERTEX:
 			case BindingType::STORAGE_BUFFER_COMPUTE:
 				_dbg_assert_(data[i].buffer.buffer != VK_NULL_HANDLE);
 				bufferInfo[numBuffers].buffer = data[i].buffer.buffer;

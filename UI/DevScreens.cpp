@@ -105,16 +105,18 @@ static const char *g_debugOverlayList[] = {
 	"GPU Profile",
 	"GPU Allocator Viewer",
 	"Framebuffer list",
+	"JIT stats",
 };
 
 void AddOverlayList(UI::ViewGroup *items, ScreenManager *screenManager) {
 	using namespace UI;
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
-	int numOverlays = ARRAY_SIZE(g_debugOverlayList);
+	static_assert(ARRAY_SIZE(g_debugOverlayList) == (int)DebugOverlay::JIT_STATS + 1, "g_debugOverlayList must match DebugOverlay");
+	PopupMultiChoice *choice = items->Add(new PopupMultiChoice((int *)&g_Config.iDebugOverlay, dev->T("Debug overlay"), g_debugOverlayList, 0, ARRAY_SIZE(g_debugOverlayList), I18NCat::DEVELOPER, screenManager));
 	if (!(g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL)) {
-		numOverlays -= 2;  // skip the last 2.
+		choice->HideChoice((int)DebugOverlay::GPU_PROFILE);
+		choice->HideChoice((int)DebugOverlay::GPU_ALLOCATOR);
 	}
-	items->Add(new PopupMultiChoice((int *)&g_Config.iDebugOverlay, dev->T("Debug overlay"), g_debugOverlayList, 0, numOverlays, I18NCat::DEVELOPER, screenManager));
 }
 
 void SaveFrameDump() {
@@ -761,7 +763,7 @@ void TouchTestScreen::CreateViews() {
 	root_->Add(theTwo);
 
 #if !PPSSPP_PLATFORM(UWP)
-	static const char *renderingBackend[] = { "OpenGL", "(n/a)", "Direct3D 11", "Vulkan" };
+	static const char *renderingBackend[] = { "OpenGL", "(n/a)", "Direct3D 11", "Vulkan", "Metal" };
 	PopupMultiChoice *renderingBackendChoice = root_->Add(new PopupMultiChoice(&g_Config.iGPUBackend, gr->T("Backend"), renderingBackend, (int)GPUBackend::OPENGL, ARRAY_SIZE(renderingBackend), I18NCat::GRAPHICS, screenManager()));
 	renderingBackendChoice->OnChoice.Handle(this, &TouchTestScreen::OnRenderingBackend);
 
@@ -772,6 +774,8 @@ void TouchTestScreen::CreateViews() {
 		renderingBackendChoice->HideChoice((int)GPUBackend::DIRECT3D11);
 	if (!g_Config.IsBackendEnabled(GPUBackend::VULKAN))
 		renderingBackendChoice->HideChoice((int)GPUBackend::VULKAN);
+	if (!g_Config.IsBackendEnabled(GPUBackend::METAL))
+		renderingBackendChoice->HideChoice((int)GPUBackend::METAL);
 #endif
 
 #if PPSSPP_PLATFORM(ANDROID)

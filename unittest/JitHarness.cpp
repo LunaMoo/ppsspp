@@ -53,7 +53,11 @@
 #endif
 #include "unittest/UnitTest.h"
 
+// The clock as the terminating syscall sees it, so the cores can be compared on cycles too.
+static u64 g_terminatorTicks;
+
 void UnitTestTerminator() {
+	g_terminatorTicks = CoreTiming::GetTicks(currentMIPS);
 	// Bails out of jit so we can time things.
 	coreState = CORE_POWERDOWN;
 	hleSkipDeadbeef();
@@ -254,8 +258,6 @@ bool TestJit() {
 bool TestJitDotBench() {
 	SetupJitHarness();
 	g_Config.bFastMemory = true;
-	const bool oldAccurateVdot = g_Config.bAccurateVdot;
-	g_Config.bAccurateVdot = true;
 
 	struct Sequence {
 		const char *name;
@@ -303,7 +305,6 @@ bool TestJitDotBench() {
 		printf("%-14s %6.2f ns per dot\n", seq.name, 1e9 / (callsPerSecond * groups * seq.dots));
 	}
 
-	g_Config.bAccurateVdot = oldAccurateVdot;
 	DestroyJitHarness();
 	return ok;
 }
@@ -471,7 +472,6 @@ bool TestJitReplacementHooks() {
 //                           a later case on its own.
 //   PPSSPP_CPUFUZZ_STRICT   fail the test on any difference, not only on a crash.
 //   PPSSPP_CPUFUZZ_BLOCKS   print the IR and host code of every block the JITs ran, after each case.
-//   PPSSPP_CPUFUZZ_ACCURATE_VDOT  0 to run without AccurateVdot (the VFPU's own dot products), which is on by default.
 //   PPSSPP_CPUFUZZ_OPS      comma-separated instruction name prefixes to generate only, for fast
 //                           runs on the instructions being worked on. "dot" is the dot products
 //                           and the prefixes. Without PPSSPP_CPUFUZZ_CLASSES, the class is "v"
@@ -505,6 +505,7 @@ struct FuzzState {
 	u32 hi, lo, fcr31, fpcond;
 	int llBit;
 	u8 mem[1024];
+	u32 cycles;
 };
 
 // The loads and stores hit scratch memory through k0, which points at its middle.
@@ -859,9 +860,11 @@ static void RunFuzzCase(const std::vector<u32> &code, const FuzzState &init, Fuz
 
 	mips->pc = codeAddr;
 	coreState = CORE_RUNNING_CPU;
+	const u64 startTicks = CoreTiming::GetTicks(mips);
 	while (coreState == CORE_RUNNING_CPU) {
 		mips->RunLoopUntil(CoreTiming::GetTicks(mips) + 1000000);
 	}
+	out->cycles = (u32)(g_terminatorTicks - startTicks);
 
 	if (g_fuzzPrintBlocks && MIPSComp::jit) {
 		JitBlockCacheDebugInterface *blocks = MIPSComp::jit->GetBlockCacheDebugInterface();
@@ -945,6 +948,9 @@ static int DiffFuzzStates(const FuzzState &ref, const FuzzState &other, std::str
 	}
 	if (ref.llBit != other.llBit) {
 		report("llBit", ref.llBit, other.llBit);
+	}
+	if (ref.cycles != other.cycles) {
+		report("cycles", ref.cycles, other.cycles);
 	}
 	for (int i = 0; i < (int)sizeof(ref.mem); i += 4) {
 		u32 a, b;
@@ -1135,9 +1141,6 @@ bool TestCPUEquivalence() {
 	// terminating syscall doesn't.
 	const bool oldSkipDeadbeef = g_Config.bSkipDeadbeefFilling;
 	g_Config.bSkipDeadbeefFilling = true;
-	const bool oldAccurateVdot = g_Config.bAccurateVdot;
-	const char *accurateVdot = getenv("PPSSPP_CPUFUZZ_ACCURATE_VDOT");
-	g_Config.bAccurateVdot = !accurateVdot || strcmp(accurateVdot, "0") != 0;
 
 	const char *countStr = getenv("PPSSPP_CPUFUZZ_COUNT");
 	const char *seedStr = getenv("PPSSPP_CPUFUZZ_SEED");
@@ -1296,7 +1299,6 @@ bool TestCPUEquivalence() {
 	mipsr4k.UpdateCore(CPUCore::INTERPRETER);
 	DestroyJitHarness();
 	g_Config.bSkipDeadbeefFilling = oldSkipDeadbeef;
-	g_Config.bAccurateVdot = oldAccurateVdot;
 	return success;
 }
 

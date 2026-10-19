@@ -29,6 +29,9 @@
 #include <unistd.h>
 #endif
 
+#include <memory>
+#include <mutex>
+
 #include "Common/System/System.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
@@ -46,6 +49,160 @@
 // DebuggerParamType::OPTIONAL, exactly the problem the note above is avoiding.
 bool NetworkAllowSpeedControl();
 
+namespace {
+
+// Filled in by the savestate callback, on the emu thread.
+struct SaveStateResult {
+	std::mutex lock;
+	bool done = false;
+	SaveState::Status status = SaveState::Status::FAILURE;
+	std::string message;
+	std::string metadata;
+};
+
+enum class StateOp {
+	LOAD,
+	SAVE,
+	REWIND,
+	VERIFY,
+};
+
+struct WebSocketGameState : public DebuggerSubscriber {
+	void StateOperation(DebuggerRequest &req, StateOp op);
+	void Broadcast(net::WebSocketServer *ws) override;
+
+private:
+	struct Waiting {
+		const char *event;
+		std::string ticket;
+		std::shared_ptr<SaveStateResult> result;
+	};
+	std::vector<Waiting> waiting_;
+};
+
+}  // namespace
+
+// Load a savestate file (game.state.load), save one (game.state.save), rewind to the newest
+// rewind snapshot (game.state.rewind), or check that saving and reading back the current state
+// agree (game.state.verify)
+//
+// The operation is queued, and happens at the end of the next frame the CPU runs, so follow this
+// with something that runs it, like cpu.runUntilTime.
+//
+// Rewind snapshots are only taken with the RewindSnapshotInterval setting on. A rewind restores the
+// newest snapshot and keeps it, so a later rewind comes back to it, but one within 0.8 seconds of
+// the last steps further back.
+//
+// Parameters:
+//  - path: string, path to the .ppst file (only for load and save).
+//  - wait: optional boolean, respond when the operation has finished rather than when queued.
+//
+// Response (same event name) once queued, or an error if the network or achievements hardcore
+// mode refuses it, or there's nothing to rewind to. With wait, it's sent once done instead, with
+// message and metadata strings (for a rewind, how long ago the snapshot was taken), or an error
+// if the operation failed.
+void WebSocketGameState::StateOperation(DebuggerRequest &req, StateOp op) {
+	static const char *const events[] = { "game.state.load", "game.state.save", "game.state.rewind", "game.state.verify" };
+	const char *event = events[(int)op];
+	std::string path;
+	bool wait = false;
+	if ((op == StateOp::LOAD || op == StateOp::SAVE) && !req.ParamString("path", &path))
+		return;
+	if (!req.ParamBool("wait", &wait, DebuggerParamType::OPTIONAL))
+		return;
+
+	// The queued operation holds the only other reference, so Broadcast() can also tell when it's
+	// dropped without ever running (at shutdown, for one).
+	std::shared_ptr<SaveStateResult> result;
+	if (wait)
+		result = std::make_shared<SaveStateResult>();
+	auto callback = [event, result](SaveState::Status status, std::string_view message, std::string_view metadata) {
+		if (status == SaveState::Status::FAILURE) {
+			ERROR_LOG(Log::System, "%s: %.*s", event, STR_VIEW(message));
+		}
+		if (result) {
+			std::lock_guard<std::mutex> guard(result->lock);
+			result->status = status;
+			result->message = message;
+			result->metadata = metadata;
+			result->done = true;
+		}
+	};
+
+	bool running = false;
+	bool canRewind = true;
+	bool queued = false;
+	Core_RunOnCPUThread([&] {
+		running = PSP_GetBootState() == BootState::Complete;
+		if (!running) {
+			return;
+		}
+		switch (op) {
+		case StateOp::LOAD:
+			queued = SaveState::Load(Path(path), -1, callback);
+			break;
+		case StateOp::SAVE:
+			queued = SaveState::Save(Path(path), -1, callback);
+			break;
+		case StateOp::REWIND:
+			canRewind = SaveState::CanRewind();
+			if (canRewind) {
+				queued = SaveState::Rewind(callback);
+			}
+			break;
+		case StateOp::VERIFY:
+			queued = SaveState::Verify(callback);
+			break;
+		}
+	});
+	if (!running)
+		return req.Fail("Game not running");
+	if (!canRewind)
+		return req.Fail("No rewind snapshots");
+	if (!queued) {
+		return req.Fail(std::string("Could not queue ") + event);
+	}
+
+	if (!wait) {
+		req.Respond();
+		return;
+	}
+	const JsonNode *ticket = req.data.get("ticket");
+	waiting_.push_back({ event, ticket ? json_stringify(ticket) : "", result });
+}
+
+void WebSocketGameState::Broadcast(net::WebSocketServer *ws) {
+	for (auto it = waiting_.begin(); it != waiting_.end(); ) {
+		// Check this first: if the callback ran, it was done before letting go.
+		bool dropped = it->result.use_count() == 1;
+		// Our own reference, since erasing the entry below must not free the mutex we're holding.
+		std::shared_ptr<SaveStateResult> result = it->result;
+		std::lock_guard<std::mutex> guard(result->lock);
+		if (!result->done && !dropped) {
+			++it;
+			continue;
+		}
+
+		bool failed = !result->done || result->status == SaveState::Status::FAILURE;
+		JsonWriter j;
+		j.begin();
+		j.writeString("event", failed ? "error" : it->event);
+		j.writeString("message", result->done ? result->message : "Savestate operation was dropped");
+		if (result->done) {
+			j.writeString("metadata", result->metadata);
+		}
+		if (failed) {
+			j.writeInt("level", (int)LogLevel::LERROR);
+		}
+		if (!it->ticket.empty()) {
+			j.writeRaw("ticket", it->ticket);
+		}
+		j.end();
+		ws->Send(j.str());
+		it = waiting_.erase(it);
+	}
+}
+
 static uint32_t GetOwnProcessID() {
 #if PPSSPP_PLATFORM(UWP)
 	return (uint32_t)GetCurrentProcessId();
@@ -57,14 +214,18 @@ static uint32_t GetOwnProcessID() {
 }
 
 DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
+	auto p = new WebSocketGameState();
 	map["game.reset"] = &WebSocketGameReset;
 	map["game.status"] = &WebSocketGameStatus;
-	map["game.state.load"] = &WebSocketGameStateLoad;
+	map["game.state.load"] = [p](DebuggerRequest &req) { p->StateOperation(req, StateOp::LOAD); };
+	map["game.state.save"] = [p](DebuggerRequest &req) { p->StateOperation(req, StateOp::SAVE); };
+	map["game.state.rewind"] = [p](DebuggerRequest &req) { p->StateOperation(req, StateOp::REWIND); };
+	map["game.state.verify"] = [p](DebuggerRequest &req) { p->StateOperation(req, StateOp::VERIFY); };
 	map["game.speed.get"] = &WebSocketGameSpeedGet;
 	map["game.speed.set"] = &WebSocketGameSpeedSet;
 	map["version"] = &WebSocketVersion;
 
-	return nullptr;
+	return p;
 }
 
 // Reset emulation (game.reset)
@@ -125,35 +286,6 @@ void WebSocketGameStatus(DebuggerRequest &req) {
 		}
 		json.writeBool("paused", GetUIState() == UISTATE_PAUSEMENU);
 	});
-}
-
-// Load a savestate file (game.state.load)
-//
-// The load is queued, and happens at the end of the next frame the CPU runs, so follow this with
-// something that runs it, like cpu.runUntilTime.
-//
-// Parameters:
-//  - path: string, path to the .ppst file.
-//
-// Response (same event name) with no extra data, once queued.
-void WebSocketGameStateLoad(DebuggerRequest &req) {
-	std::string path;
-	if (!req.ParamString("path", &path))
-		return;
-
-	bool running = false;
-	Core_RunOnCPUThread([&] {
-		running = PSP_GetBootState() == BootState::Complete;
-	});
-	if (!running)
-		return req.Fail("Game not running");
-
-	SaveState::Load(Path(path), -1, [](SaveState::Status status, std::string_view message, std::string_view) {
-		if (status == SaveState::Status::FAILURE) {
-			ERROR_LOG(Log::System, "game.state.load: %.*s", STR_VIEW(message));
-		}
-	});
-	req.Respond();
 }
 
 // Percentages are relative to 60 FPS, matching how the in-app settings present the alternative

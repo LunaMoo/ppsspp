@@ -128,8 +128,6 @@ private:
 	void BranchRSZeroComp(MIPSOpcode op, IRComparison cc, bool andLink, bool likely);
 	void BranchRSRTComp(MIPSOpcode op, IRComparison cc, bool likely);
 	bool CanContinuePastBranch(const BranchInfo &branchInfo, bool constantOperands);
-	static constexpr int MAX_CONTINUED_INSTRUCTIONS = 96;
-	static constexpr int MAX_CONTINUED_BRANCHES = 8;
 
 	// Utilities to reduce duplicated code
 	void CompShiftImm(MIPSOpcode op, IROp shiftType, int sa);
@@ -161,7 +159,6 @@ private:
 	// With destScratch, a Vec4 that has dot k's result at lane k may be written whole. avoid is a Vec4
 	// temp not to use (or -1). Returns false, having written nothing, if they don't fit.
 	bool TryMultiDot(const MultiDot *dots, int count, int terms, int avoid, bool destScratch);
-	bool UseAccurateVdot() const;
 
 	// State
 	JitState js;

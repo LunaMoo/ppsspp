@@ -138,8 +138,11 @@ tests_good = [
   "audio/atrac/setdata",
   "audio/atrac/sas",
   "audio/atrac/c0mono",
+  "audio/atrac/headerfields",
   "audio/audiocodec/basic",
   "audio/audiocodec/at3param",
+  "audio/audiocodec/at3errors",
+  "audio/audiocodec/context",
   "audio/mp3/checkneeded",
   "audio/mp3/getbitrate",
   "audio/mp3/getchannel",
@@ -185,6 +188,7 @@ tests_good = [
   "audio/sascore/pcm",
   "audio/sascore/pitch",
   "audio/sascore/vag",
+  "ccc/convertstring",
   "ctrl/ctrl",
   "ctrl/idle/idle",
   "ctrl/sampling/sampling",
@@ -518,6 +522,8 @@ tests_good = [
   "utility/msgdialog/abort",
   "utility/savedata/autosave",
   "utility/savedata/shutdownstatus",
+  "utility/savedata/noupdate",
+  "utility/savedata/initstatus",
   "utility/savedata/filelist",
   "utility/savedata/getsize",
   "utility/savedata/makedata",
@@ -599,7 +605,6 @@ tests_next = [
   "audio/mp3/init",
   "audio/output2/frequency",
   "audio/output2/rest",
-  "ccc/convertstring",
   "font/fonttest",
   "font/charinfo",
   "font/newlib",
@@ -659,7 +664,9 @@ tests_next = [
   #"utility/savedata/saveemptyfilename",
   "utility/savedata/secureversion",
   "utility/savedata/sizes",
+  "video/mp4/avchold",
   "video/mpeg/basic",
+  "video/mpeg/decodeend",
   "video/mpeg/deletetiming",
   "video/pmf/pmf",
   "video/pmf_simple/pmf_simple",
@@ -749,6 +756,9 @@ def run_tests(test_list, args):
     # TODO: Maybe --compare should detect --graphics?
     cmdline = [PPSSPP_EXE, '--root', TEST_ROOT + '../', '--compare', '--timeout-wall=' + str(timeout), '@-']
     cmdline.extend([i for i in args if i not in ['-g', '-m', '-b']])
+    # A memory stick of the tests' own, so they neither write into the user's nor see its firmware.
+    if not any(i.startswith('--memstick') for i in cmdline):
+      cmdline.append('--memstick=' + os.path.join(os.path.dirname(os.path.abspath(PPSSPP_EXE)), 'memstick'))
 
     c = Command(cmdline, '\n'.join(test_filenames))
     returncode = c.run(timeout * len(test_filenames))

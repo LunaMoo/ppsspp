@@ -21,6 +21,7 @@
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
 #include "Common/System/OSD.h"
+#include "Common/System/Request.h"
 #include "Common/GPU/OpenGL/GLFeatures.h"
 #include "Common/Data/Text/Parsers.h"
 #include "Common/Data/Encoding/Utf8.h"
@@ -521,6 +522,7 @@ void DeveloperToolsScreen::CreateGraphicsTab(UI::LinearLayout *list) {
 	list->Add(new ItemHeader(sy->T("General")));
 	list->Add(new CheckBox(&g_Config.bVendorBugChecksEnabled, dev->T("Enable driver bug workarounds")));
 	list->Add(new CheckBox(&g_Config.bShaderCache, dev->T("Enable shader cache")));
+	list->Add(new CheckBox(&g_Config.bHardwareTransform, gr->T("Hardware Transform")));
 
 	auto displayRefreshRate = list->Add(new PopupSliderChoice(&g_Config.iDisplayRefreshRate, 60, 1000, 60, dev->T("Display refresh rate"), 1, screenManager()));
 	displayRefreshRate->SetFormat(si->T("%d Hz"));
@@ -735,6 +737,8 @@ void DeveloperToolsScreen::OnCopyStatesToRoot(UI::EventParams &e) {
 
 void DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 	if (allowDebugger_) {
+		// Only needed for connecting from another device, but that's the usual case.
+		System_RequestLocalNetworkPermission();
 		StartWebServer(WebServerFlags::DEBUGGER);
 	} else {
 		StopWebServer(WebServerFlags::DEBUGGER);

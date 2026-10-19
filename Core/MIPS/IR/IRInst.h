@@ -186,7 +186,6 @@ enum class IROp : uint8_t {
 	Vec4Mul,
 	Vec4Div,
 	Vec4Scale,
-	Vec4Dot,
 	Vec4VfpuDot,  // The VFPU's own dot product, bit-exact (vfpu_dot).
 	Vec4VfpuMultiDot,  // Four of them against one vector, see IRMultiDot.
 	Vec4Neg,
@@ -406,8 +405,9 @@ struct IRInst {
 	u32 constant;
 };
 
-// Returns the new PC.
-u32 IRInterpret(MIPSState *ms, const IRInst *inst);
+// Returns the new PC. With the block arena, exits go straight on to the next compiled block while
+// downcount lasts, instead of returning.
+u32 IRInterpret(MIPSState *ms, const IRInst *inst, const IRInst *chainArena = nullptr);
 
 // Each IR block gets a constant pool.
 class IRWriter {
@@ -444,16 +444,22 @@ private:
 	std::vector<IRInst> insts_;
 };
 
+// How far IRFrontend compiles on past conditional branches. The interpreter ends its blocks in the
+// same places (see GetIRBlockEnd in MIPSTables.cpp), so events happen at the same instruction.
+constexpr bool IR_CONTINUE_BRANCHES = true;
+constexpr int IR_MAX_CONTINUED_INSTRUCTIONS = 96;
+constexpr int IR_MAX_CONTINUED_BRANCHES = 8;
+
 struct IROptions {
 	uint32_t disableFlags;
 	bool unalignedLoadStore;
 	bool unalignedLoadStoreVec4;
 	bool preferVec4;
-	bool preferVec4Dot;
 	bool optimizeForInterpreter;
 	// The backend has Vec4VfpuMultiDot.
 	bool vfpuMultiDot;
-	// Compile on past conditional branches (see IRFrontend::CanContinuePastBranch).
+	// Compile on past conditional branches (see IRFrontend::CanContinuePastBranch). Always
+	// IR_CONTINUE_BRANCHES, which the interpreter follows.
 	bool continueBranches;
 	// The backend has Vec4Min, Vec4Max, Vec4Slt, Vec4Sge and Vec4CvtScaledSW.
 	bool moreVec4Ops;

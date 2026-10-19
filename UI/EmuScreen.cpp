@@ -61,6 +61,7 @@ using namespace std::placeholders;
 #include "Core/Reporting.h"
 #include "Core/Util/PathUtil.h"
 #include "Core/System.h"
+#include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
@@ -282,6 +283,11 @@ void EmuScreen::ProcessGameBoot(const Path &filename) {
 		g_OSD.Show(OSDType::MESSAGE_WARNING, "Shader cache is disabled (developer)");
 	}
 
+	if (!g_Config.bHardwareTransform) {
+		// Only developers should ever see this.
+		g_OSD.Show(OSDType::MESSAGE_WARNING, "Hardware transform is disabled (developer)");
+	}
+
 	if (g_Config.bTiltInputEnabled && g_Config.iTiltInputType != 0 && System_GetPropertyBool(SYSPROP_HAS_ACCELEROMETER)) {
 		auto co = GetI18NCategory(I18NCat::CONTROLS);
 		auto di = GetI18NCategory(I18NCat::DIALOG);
@@ -306,6 +312,9 @@ void EmuScreen::ProcessGameBoot(const Path &filename) {
 		coreParam.gpuCore = GPUCORE_VULKAN;
 		break;
 #endif
+	case GPUBackend::METAL:
+		coreParam.gpuCore = GPUCORE_METAL;
+		break;
 	}
 
 	// Preserve the existing graphics context.
@@ -449,13 +458,8 @@ EmuScreen::~EmuScreen() {
 	g_Config.TimeTracker().Stop(gameID);
 
 	if (bootPending_) {
-		// We probably quit during boot, got blocked in lostdevice, and then didn't end up in update again to call PSP_InitUpdate.
-		// So we need to finish and join the boot thread before we can exit.
-		_dbg_assert_(PollBootState() != BootState::Booting);
-		// Make sure we join the boot thread, by calling PSP_InitUpdate.
-		std::string error_string = "(unknown error)";
-		PSP_InitUpdate(&error_string);
-		ERROR_LOG(Log::G3D, "Quit during boot, not good. %s", error_string.c_str());
+		// We quit during boot (maybe from the background). PSP_Shutdown below waits for the loader thread.
+		ERROR_LOG(Log::G3D, "Quit during boot");
 		bootPending_ = false;
 	}
 
@@ -885,6 +889,9 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 				auto n = GetI18NCategory(I18NCat::NETWORKING);
 				auto di = GetI18NCategory(I18NCat::DIALOG);
 				g_Config.bEnableWlan = !g_Config.bEnableWlan;
+				if (g_Config.bEnableWlan) {
+					System_RequestLocalNetworkPermission();
+				}
 				// Try to avoid adding more strings so we piece together a message from existing ones.
 				g_OSD.Show(OSDType::MESSAGE_INFO, StringFromFormat(
 					"%s: %s", n->T_cstr("Enable networking"), g_Config.bEnableWlan ? di->T_cstr("Enabled") : di->T_cstr("Disabled")), 2.0, "toggle_wlan");
@@ -1352,13 +1359,7 @@ void EmuScreen::CreateViews() {
 }
 
 void EmuScreen::deviceLost() {
-	// If we are currently in the middle of boot, we have to block here!
-	// Otherwise the boot thread will encounter draw_ == nullptr and weird stuff like that.
-	// We're doing this in a very ugly way for now.
-	while (PollBootState() == BootState::Booting) {
-		sleep_ms(100, "device-lost-during-boot");
-	}
-
+	// A boot in progress only creates the GPU from PSP_InitUpdate, which doesn't run while the device is lost.
 	UIScreen::deviceLost();
 }
 
@@ -1379,8 +1380,12 @@ void EmuScreen::OpenChat(bool focus) {
 	}
 	if (chatMenu_ != nullptr) {
 		chatMenu_->SetVisibility(UI::V_VISIBLE);
+		// Not here: this can run from the control mapper's own key handler, under its lock.
+		releaseMapperInput_ = true;
 
 		if (focus) {
+			// Drop keys and stick directions held in-game, or they'd start moving the focus.
+			UI::EnableFocusMovement(false);
 			UI::EnableFocusMovement(true);
 			root_->SetDefaultFocusView(chatMenu_);
 
@@ -1405,6 +1410,12 @@ void EmuScreen::update() {
 
 	// This is where views are recreated.
 	UIScreen::update();
+
+	if (releaseMapperInput_) {
+		// Otherwise a stick let go inside the chat would stay pushed for the game.
+		g_controlMapper.ReleaseAll();
+		releaseMapperInput_ = false;
+	}
 
 	resumeButton_->SetVisibility(coreState == CoreState::CORE_RUNTIME_ERROR && Memory::MemFault_MayBeResumable() ? V_VISIBLE : V_GONE);
 	resetButton_->SetVisibility(coreState == CoreState::CORE_RUNTIME_ERROR ? V_VISIBLE : V_GONE);
@@ -1583,6 +1594,14 @@ bool EmuScreen::ShouldRunEmulation(ScreenRenderMode mode) const {
 	return true;
 }
 
+// The GPU only applies a changed Skip Buffer Effects setting in BeginHostFrame, so while emulation is
+// paused it can still be in non-buffered mode. Then it draws directly to the backbuffer, which isn't
+// bound yet in PreRender.
+static bool GPUIsBuffered() {
+	FramebufferManagerCommon *framebufferManager = gpu->GetFramebufferManagerCommon();
+	return !framebufferManager || framebufferManager->UseBufferedRendering();
+}
+
 ScreenRenderFlags EmuScreen::PreRender(ScreenRenderMode mode) {
 	// If a boot is in progress, update it.
 	ProcessGameBoot(gamePath_);
@@ -1593,7 +1612,7 @@ ScreenRenderFlags EmuScreen::PreRender(ScreenRenderMode mode) {
 		if (ShouldRunEmulation(mode)) {
 			// We need to run emulation here, and perform all the normal render passes.
 			return RunEmulation(false);
-		} else if (gpu) {
+		} else if (gpu && GPUIsBuffered()) {
 			// Need to check for gpu here, we might be in reset.
 			const DeviceOrientation orientation = GetDeviceOrientation();
 			const DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(orientation);
@@ -1749,7 +1768,7 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		} else if (PSP_CoreParameter().frozen) {
 			std::string errorString;
 			if (CChunkFileReader::ERROR_NONE != SaveState::LoadFromRam(freezeState_, &errorString)) {
-				ERROR_LOG(Log::SaveState, "Failed to load freeze state (%s). Unfreezing.", errorString.c_str());
+				ERROR_LOG(Log::SaveState, "Failed to load freeze state (failure at %s). Unfreezing.", errorString.c_str());
 				PSP_CoreParameter().frozen = false;
 			}
 		}

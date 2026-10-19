@@ -80,6 +80,8 @@ std::string GPUBackendToString(GPUBackend backend) {
 		return "DIRECT3D11";
 	case GPUBackend::VULKAN:
 		return "VULKAN";
+	case GPUBackend::METAL:
+		return "METAL";
 	}
 	// Intentionally not a default so we get a warning.
 	return "INVALID";
@@ -92,6 +94,8 @@ GPUBackend GPUBackendFromString(std::string_view backend) {
 		return GPUBackend::DIRECT3D11;
 	if (equalsNoCase(backend, "VULKAN") || backend == "3")
 		return GPUBackend::VULKAN;
+	if (equalsNoCase(backend, "METAL") || backend == "4")
+		return GPUBackend::METAL;
 	return GPUBackend::OPENGL;
 }
 
@@ -211,8 +215,8 @@ static int GameBrowserViewFromGridView(int legacyGridView, GameBrowserViewMode d
 	return (int)(legacyGridView ? GameBrowserViewMode::GRID : GameBrowserViewMode::LIST);
 }
 
-// Games and Homebrew switch everyone to the large list, ignoring the old setting. The others keep it.
-static int DefaultGameBrowserView1() { return GameBrowserViewFromGridView(g_Config.iLegacyGridView1, GameBrowserViewMode::GRID); }
+// Recent, Games and Homebrew switch everyone to the large list, ignoring the old setting. Remote keeps it.
+static int DefaultGameBrowserView1() { return (int)GameBrowserViewMode::LARGE_LIST; }
 static int DefaultGameBrowserView2() { return (int)GameBrowserViewMode::LARGE_LIST; }
 static int DefaultGameBrowserView3() { return (int)GameBrowserViewMode::LARGE_LIST; }
 static int DefaultGameBrowserView4() { return GameBrowserViewFromGridView(g_Config.iLegacyGridView4, GameBrowserViewMode::LIST); }
@@ -306,7 +310,6 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("ShowRegionOnGameIcon", SETTING(g_Config, bShowRegionOnGameIcon), false, CfgFlag::DEFAULT),
 	ConfigSetting("ShowIDOnGameIcon", SETTING(g_Config, bShowIDOnGameIcon), false, CfgFlag::DEFAULT),
 	ConfigSetting("GameGridScale", SETTING(g_Config, fGameGridScale), &DefaultGameGridScale, CfgFlag::DEFAULT),
-	ConfigSetting("GridView1", SETTING(g_Config, iLegacyGridView1), -1, &LegacyGridViewToString, &LegacyGridViewFromString, CfgFlag::DONT_SAVE),
 	ConfigSetting("GridView4", SETTING(g_Config, iLegacyGridView4), -1, &LegacyGridViewToString, &LegacyGridViewFromString, CfgFlag::DONT_SAVE),
 	// These must come after GridView*, which their defaults are taken from.
 	ConfigSetting("GameBrowserView1", SETTING(g_Config, iGameBrowserView1), &DefaultGameBrowserView1, CfgFlag::DEFAULT),
@@ -329,6 +332,8 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("CompressSymbols", SETTING(g_Config, bCompressSymbols), true, CfgFlag::DEFAULT),
 	ConfigSetting("CacheFullIsoInRam", SETTING(g_Config, bCacheFullIsoInRam), false, CfgFlag::PER_GAME),
 	ConfigSetting("AutoUpgradeFirmware", SETTING(g_Config, bAutoUpgradeFirmware), true, CfgFlag::DEFAULT),
+	ConfigSetting("CSOPreset", SETTING(g_Config, iCSOPreset), 0, CfgFlag::DEFAULT),
+	ConfigSetting("PackKeepOriginal", SETTING(g_Config, bPackKeepOriginal), false, CfgFlag::DEFAULT),
 	ConfigSetting("RemoteISOPort", SETTING(g_Config, iRemoteISOPort), 0, CfgFlag::DEFAULT),
 	ConfigSetting("LastRemoteISOServer", SETTING(g_Config, sLastRemoteISOServer), "", CfgFlag::DEFAULT),
 	ConfigSetting("LastRemoteISOPort", SETTING(g_Config, iLastRemoteISOPort), 0, CfgFlag::DEFAULT),
@@ -438,7 +443,6 @@ static const ConfigSetting cpuSettings[] = {
 	ConfigSetting("IOTimingMethod", SETTING(g_Config, iIOTimingMethod), IOTIMING_FAST, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("FastMemoryAccess", SETTING(g_Config, bFastMemory), true, CfgFlag::PER_GAME),
 	ConfigSetting("FunctionReplacements", SETTING(g_Config, bFuncReplacements), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
-	ConfigSetting("AccurateVdot", SETTING(g_Config, bAccurateVdot), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("HideSlowWarnings", SETTING(g_Config, bHideSlowWarnings), false, CfgFlag::DEFAULT),
 	ConfigSetting("HideStateWarnings", SETTING(g_Config, bHideStateWarnings), false, CfgFlag::DEFAULT),
 	ConfigSetting("JitDisableFlags", SETTING(g_Config, uJitDisableFlags), (uint32_t)0, CfgFlag::PER_GAME),
@@ -609,6 +613,11 @@ bool Config::IsBackendEnabled(GPUBackend backend) {
 		return false;
 #endif
 
+#if !PPSSPP_API(METAL)
+	if (backend == GPUBackend::METAL)
+		return false;
+#endif
+
 #if !PPSSPP_API(ANY_GL)
 	if (backend == GPUBackend::OPENGL)
 		return false;
@@ -726,7 +735,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("DepthRasterMode", SETTING(g_Config, iDepthRasterMode), &DefaultDepthRaster, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("SoftwareRenderer", SETTING(g_Config, bSoftwareRendering), false, CfgFlag::PER_GAME),
 	ConfigSetting("SoftwareDisableDithering", SETTING(g_Config, bSoftwareDisableDithering), false, CfgFlag::PER_GAME),
-	ConfigSetting("HardwareTransform", SETTING(g_Config, bHardwareTransform), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	ConfigSetting("HardwareTransformDebug", SETTING(g_Config, bHardwareTransform), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TextureFiltering", SETTING(g_Config, iTexFiltering), 1, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("Smart2DTexFiltering", SETTING(g_Config, bSmart2DTexFiltering), false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("InternalResolution", SETTING(g_Config, iInternalResolution), &DefaultInternalResolution, CfgFlag::PER_GAME | CfgFlag::REPORT),
@@ -777,8 +786,6 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("LowLatencyPresent", SETTING(g_Config, bLowLatencyPresent), false, CfgFlag::PER_GAME),
 	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 2, CfgFlag::PER_GAME | CfgFlag::REPORT),
 
-	// Not really a graphics setting...
-	ConfigSetting("SplineBezierQuality", SETTING(g_Config, iSplineBezierQuality), 2, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TextureShader", SETTING(g_Config, sTextureShaderName), "Off", CfgFlag::PER_GAME),
 	ConfigSetting("ShaderChainRequires60FPS", SETTING(g_Config, bShaderChainRequires60FPS), false, CfgFlag::PER_GAME),
 
@@ -1612,7 +1619,7 @@ void Config::PostLoadCleanup() {
 
 	if (iGPUBackend == 1) {  // d3d9, no longer supported. Fall back to D3D11.
 		iGPUBackend = (int)GPUBackend::DIRECT3D11;
-	} else if (iGPUBackend < 0 || iGPUBackend > 3) {
+	} else if (iGPUBackend < 0 || iGPUBackend > (int)GPUBackend::METAL) {
 		iGPUBackend = (int)DefaultGPUBackend();
 	}
 

@@ -28,6 +28,8 @@ enum GPUCore : int {
 	GPUCORE_SOFTWARE = 1,
 	GPUCORE_DIRECTX11 = 3,
 	GPUCORE_VULKAN = 4,
+	GPUCORE_NULL = 5,  // Draws nothing, see GPU_Null.h.
+	GPUCORE_METAL = 6,
 };
 
 enum class FPSLimit {

@@ -249,7 +249,8 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 				NativeApp.sendMessageFromJava("permission_denied", "storage");
 			}
 
-			if (Build.VERSION.SDK_INT >= 35) {
+			// ACCESS_LOCAL_NETWORK exists from Android 17 (API 37). Earlier versions report it as denied.
+			if (Build.VERSION.SDK_INT >= 37) {
 				if (this.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED) {
 					NativeApp.sendMessageFromJava("permission_granted", "local_network");
 				} else {
@@ -407,10 +408,6 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 	}
 
 	public void Initialize() {
-		// isLandscape is used to trigger GetAppInfo currently, we
-		boolean landscape = NativeApp.isLandscape();
-		Log.d(TAG, "Landscape: " + landscape);
-
 		ApplicationInfo appInfo = getApplicationInfo();
 
 		int deviceType = NativeApp.DEVICE_TYPE_MOBILE;
@@ -482,9 +479,8 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		PackageManager packageManager = getPackageManager();
 		String installerName = getInstallerName(packageManager);
 
-		int smallestScreenWidthDp = getResources().getConfiguration().smallestScreenWidthDp;
 		NativeApp.audioConfig(optimalFramesPerBuffer, optimalSampleRate);
-		NativeApp.init(model, deviceType, languageRegion, apkFilePath, dataDir, extStorageDir, externalFilesDir, nativeLibDir, additionalStorageDirs, cacheDir, shortcut, installerName, Build.VERSION.SDK_INT, Build.BOARD, smallestScreenWidthDp);
+		NativeApp.init(model, deviceType, languageRegion, apkFilePath, dataDir, extStorageDir, externalFilesDir, nativeLibDir, additionalStorageDirs, cacheDir, shortcut, installerName, Build.VERSION.SDK_INT, Build.BOARD);
 
 		sendInitialGrants();
 
@@ -554,11 +550,6 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 
 	@SuppressLint("SourceLockedOrientationActivity")
 	private void updateScreenRotation(String cause) {
-		if (Build.VERSION.SDK_INT >= 37 && getResources().getConfiguration().smallestScreenWidthDp >= 600) {
-			// Android 17+ on large screens (sw600dp+) ignores orientation requests to push for adaptive apps.
-			// If we try anyway, it's just a waste of time and might cause weirdness.
-			return;
-		}
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 			if (isInMultiWindowMode()) {
 				// Do not try to enforce rotation! This can result in re-init loops.
@@ -1175,9 +1166,7 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		if (m_hasNoNativeBinary) {
 			return;
 		}
-		// The surface size change that comes with it is what actually updates the native side, except
-		// for this, which the native side was told once at init. Changes on fold/unfold.
-		NativeApp.sendMessageFromJava("smallestScreenWidthDp", String.valueOf(newConfig.smallestScreenWidthDp));
+		// The surface size change that comes with it is what actually updates the native side.
 		// This re-measures the display, so the density check below sees the new value.
 		updateSystemUiVisibility();
 		// A density change doesn't resize the surface, so it needs separate handling.
@@ -1828,7 +1817,7 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			}
 			return true;
 		} else if (command.equals("ask_permission") && params.equals("local_network")) {
-			if (Build.VERSION.SDK_INT >= 35) {
+			if (Build.VERSION.SDK_INT >= 37) {
 				if (askForPermissions(permissionsForLocalNetwork, REQUEST_CODE_LOCAL_NETWORK_PERMISSION)) {
 					NativeApp.sendMessageFromJava("permission_pending", "local_network");
 				} else {
@@ -1840,6 +1829,10 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			return true;
 		} else if (command.equals("gps_command")) {
 			if (params.equals("open")) {
+				if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_LOCATION)) {
+					Log.i(TAG, "No location hardware, not starting location updates");
+					return true;
+				}
 				if (!askForPermissions(permissionsForLocation, REQUEST_CODE_LOCATION_PERMISSION)) {
 					mLocationHelper.startLocationUpdates();
 				}
@@ -1884,6 +1877,11 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			return true;
 		} else if (command.equals("microphone_command")) {
 			if (params.startsWith("startRecording:")) {
+				// No point asking for permission for a microphone the device doesn't have.
+				if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) {
+					Log.i(TAG, "No microphone, not starting recording");
+					return true;
+				}
 				int sampleRate = Integer.parseInt(params.replace("startRecording:", ""));
 				NativeApp.audioRecording_SetSampleRate(sampleRate);
 				if (!askForPermissions(permissionsForMicrophone, REQUEST_CODE_MICROPHONE_PERMISSION)) {

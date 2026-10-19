@@ -27,7 +27,7 @@ public class NativeApp {
 	public static final int RESULT_ERROR_ACTIVITY_NOT_FOUND = 1;
 	public static final int RESULT_ERROR_OTHER_ACTIVITY_ERROR = 2;
 
-	public static native void init(String model, int deviceType, String languageRegion, String apkPath, String dataDir, String externalStorageDir, String extFilesDir, String nativeLibDir, String additionalStorageDirs, String cacheDir, String shortcutParam, String installerName, int androidVersion, String board, int smallestScreenWidthDp);
+	public static native void init(String model, int deviceType, String languageRegion, String apkPath, String dataDir, String externalStorageDir, String extFilesDir, String nativeLibDir, String additionalStorageDirs, String cacheDir, String shortcutParam, String installerName, int androidVersion, String board);
 	public static native void audioInit();
 	public static native void audioShutdown();
 	public static native void audioConfig(int optimalFramesPerBuffer, int optimalSampleRate);
@@ -43,9 +43,8 @@ public class NativeApp {
 	public static native void setDisplayParameters(int display_xres, int display_yres, int dpi, float refreshRate);
 	// rotation is the Surface.ROTATION_* of the display. A change in it alone (a 180 degree flip) keeps the size
 	// but the swapchain still has to be recreated, for the pre-rotation.
-	public static native void backbufferResize(int bufferWidth, int bufferHeight, int format, int rotation);
+	public static native void backbufferResize(int bufferWidth, int bufferHeight, int rotation);
 
-	public static native boolean isLandscape();
 	public static native boolean isAtTopLevel();
 
 	// These have Android semantics: Resume is always called on bootup, after init

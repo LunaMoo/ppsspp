@@ -46,8 +46,6 @@ std::deque<MatchingArgs> matchingEvents;
 bool netAdhocMatchingInited;
 int adhocMatchingEventDelay = 30000; //30000
 
-static bool savedNetAdhocMatchingInited; // the storage to use during the savestating routine in sceNetAdhoc.cpp
-
 void DoNetAdhocMatchingInited(PointerWrap &p) {
 	Do(p, netAdhocMatchingInited);
 }
@@ -60,14 +58,6 @@ void ZeroNetAdhocMatchingThreads() {
 	for (auto& it : matchingThreads) {
 		it = 0;
 	}
-}
-
-void SaveNetAdhocMatchingInited() {
-	savedNetAdhocMatchingInited = netAdhocMatchingInited;
-}
-
-void RestoreNetAdhocMatchingInited() {
-	netAdhocMatchingInited = savedNetAdhocMatchingInited;
 }
 
 int netAdhocMatchingStarted = 0;
@@ -1624,6 +1614,13 @@ int sceNetAdhocMatchingStop(int matchingId) {
 }
 
 int NetAdhocMatching_Delete(int matchingId) {
+	// Running threads can't be deleted, so stop them first. This has to happen before we take peerlock,
+	// since the threads take it too.
+	SceNetAdhocMatchingContext *item = findMatchingContext(matchingId);
+	if (item && item->running) {
+		NetAdhocMatching_Stop(matchingId);
+	}
+
 	// Multithreading Lock
 	std::lock_guard<std::recursive_mutex> peer_guard(peerlock);
 
@@ -1643,10 +1640,6 @@ int NetAdhocMatching_Delete(int matchingId) {
 			// Unlink Left (Other)
 			else prev->next = context->next;
 
-			// Stop it first if it's still running
-			if (context->running) {
-				NetAdhocMatching_Stop(matchingId);
-			}
 			// Delete the Fake PSP Thread
 			//__KernelDeleteThread(item->matching_thid, SCE_KERNEL_ERROR_THREAD_TERMINATED, "AdhocMatching deleted");
 			//delete item->matchingThread;

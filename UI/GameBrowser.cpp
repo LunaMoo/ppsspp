@@ -41,6 +41,7 @@
 #include "Core/Util/VideoPlayer.h"
 
 #include "UI/GameBrowser.h"
+#include "UI/GamePacker.h"
 #include "UI/RemoteISOScreen.h"
 #include "UI/SavedataScreen.h"
 #include "UI/Store.h"
@@ -370,8 +371,9 @@ void GameButton::UpdateVideo(const std::shared_ptr<GameInfo> &ginfo, bool wantVi
 
 void GameButton::Draw(UIContext &dc) {
 	const bool largeList = viewMode_ == GameBrowserViewMode::LARGE_LIST;
-	// Like the XMB, only the selected game plays its video. The mouse can select one too, by hovering.
-	const bool wantVideo = largeList && (HasFocus() || hovering_) && pmf_player_available();
+	// Like the XMB, only the selected game plays its video. Only keyboard/gamepad focus selects, since with
+	// touch or the mouse, getting a video to play without launching the game was too fiddly.
+	const bool wantVideo = largeList && HasFocus() && pmf_player_available();
 
 	GameInfoFlags infoFlags = GameInfoFlags::PARAM_SFO | GameInfoFlags::ICON;
 	if (wantVideo) {
@@ -659,6 +661,20 @@ void GameButton::Draw(UIContext &dc) {
 		dc.FillRect(Drawable(overlayColor), overlayBounds);
 	}
 
+	// Covers the icon while the game is being compressed. Clicking opens the game screen instead of playing.
+	GamePacker::Status packStatus;
+	if (GamePacker::IsPacking(gamePath_) && GamePacker::GetStatus(&packStatus)) {
+		auto ga = GetI18NCategory(I18NCat::GAME);
+		const Bounds iconBounds(x, y, w, h);
+		dc.FillRect(Drawable(0xD0505050), iconBounds);
+		const float scale = gridStyle_ || largeList ? 0.8f * g_Config.fGameGridScale : 0.6f;
+		dc.SetFontStyle(dc.GetTheme().uiFont);
+		dc.SetFontScale(scale, scale);
+		const std::string text = std::string(ga->T("Compressing...")) + StringFromFormat("\n%d%%", (int)(packStatus.progress * 100.0f));
+		dc.DrawTextRectSqueeze(text, iconBounds, 0xFFFFFFFF, ALIGN_CENTER);
+		dc.SetFontScale(1.0f, 1.0f);
+	}
+
 	dc.RebindTexture();
 }
 
@@ -761,7 +777,7 @@ void GameBrowser::FocusGame(const Path &gamePath) {
 		}
 	}
 	// Otherwise, Refresh focuses it when it recreates the buttons.
-	focusGamePath_ = gamePath;
+	focusPath_ = gamePath;
 	refreshPending_ = true;
 }
 
@@ -772,6 +788,30 @@ void GameBrowser::SetPath(const Path &path) {
 }
 
 bool GameBrowser::Key(const KeyInput &input) {
+	// Alt+Up goes to the parent directory, as in file managers.
+	if ((input.flags & KeyInputFlags::DOWN) && (input.flags & KeyInputFlags::ModAlt) && input.keyCode == NKCODE_DPAD_UP && input.deviceId == DEVICE_ID_KEYBOARD) {
+		if ((browseFlags_ & BrowseFlags::NAVIGATE) && path_.CanNavigateUp()) {
+			NavigateUp();
+			return true;
+		}
+	}
+
+	// Backspace with no search going also goes to the parent directory, as in file managers. Never on
+	// a repeat, or holding it would climb to the root (or carry on up after clearing a search). Not
+	// every platform flags repeats, so this also tracks whether it's held.
+	if (input.keyCode == NKCODE_DEL && input.deviceId == DEVICE_ID_KEYBOARD) {
+		if (input.flags & KeyInputFlags::UP) {
+			backspaceHeld_ = false;
+		} else if (input.flags & KeyInputFlags::DOWN) {
+			const bool repeat = backspaceHeld_ || (input.flags & KeyInputFlags::IS_REPEAT);
+			backspaceHeld_ = true;
+			if (!repeat && search_.searchFilter.empty() && (browseFlags_ & BrowseFlags::NAVIGATE) && path_.CanNavigateUp()) {
+				NavigateUp();
+				return true;
+			}
+		}
+	}
+
 	bool retval = LinearLayout::Key(input);
 	if (retval) {
 		return true;
@@ -862,10 +902,6 @@ void GameBrowser::PinToggleClick(UI::EventParams &e) {
 		pinnedPaths.push_back(path);
 	}
 	refreshPending_ = true;
-}
-
-bool GameBrowser::DisplayTopBar() {
-	return path_.GetPath().ToString() != "!RECENT";
 }
 
 bool GameBrowser::HasSpecialFiles(std::vector<Path> &filenames) {
@@ -970,107 +1006,94 @@ void GameBrowser::Refresh() {
 	Add(new Spacer(1.0f));
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
 
-	// No topbar on recent screen
 	gameList_ = nullptr;
 
-	if (DisplayTopBar()) {
-		LinearLayout *topBar = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 0, 8, 0)));
-		Add(topBar);
+	LinearLayout *topBar = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 0, 8, 0)));
+	Add(topBar);
 
-		const bool pathOnSeparateLine = g_display.dp_xres < 1050 || portrait_;
+	const bool pathOnSeparateLine = g_display.dp_xres < 1050 || portrait_;
+	// Recent isn't a real folder, so it gets no path or refresh.
+	const bool isRecent = path_.GetPath().ToString() == "!RECENT";
 
-		std::string pathStr = GetFriendlyPath(path_.GetPath(), aliasMatch_, aliasDisplay_);
+	std::string pathStr = GetFriendlyPath(path_.GetPath(), aliasMatch_, aliasDisplay_);
 
-		if (pathOnSeparateLine) {
-			Add(new TextView(pathStr, ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 0, 8, 0))));
+	if (pathOnSeparateLine && !isRecent) {
+		Add(new TextView(pathStr, ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 0, 8, 0))));
+	}
+	if (browseFlags_ & BrowseFlags::NAVIGATE) {
+		if (!pathOnSeparateLine) {
+			topBar->Add(new Spacer(2.0f));
+			topBar->Add(new TextView(pathStr, ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
 		}
-		if (browseFlags_ & BrowseFlags::NAVIGATE) {
-			if (!pathOnSeparateLine) {
-				topBar->Add(new Spacer(2.0f));
-				topBar->Add(new TextView(pathStr, ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
-			}
-			topBar->Add(new Choice(ImageID("I_HOME"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::OnHomeClick);
-			if (System_GetPropertyBool(SYSPROP_HAS_ADDITIONAL_STORAGE)) {
-				topBar->Add(new Choice(ImageID("I_SDCARD"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::StorageClick);
-			}
+		topBar->Add(new Choice(ImageID("I_HOME"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::OnHomeClick);
+		if (System_GetPropertyBool(SYSPROP_HAS_ADDITIONAL_STORAGE)) {
+			topBar->Add(new Choice(ImageID("I_SDCARD"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::StorageClick);
+		}
 #if PPSSPP_PLATFORM(IOS_APP_STORE)
-			// Don't show a browse button, not meaningful to browse outside the documents folder it seems,
-			// as we can't list things like document folders of another app, as far as I can tell.
-			// However, we do show a Load.. button for picking individual files, that seems to work.
+		// Don't show a browse button, not meaningful to browse outside the documents folder it seems,
+		// as we can't list things like document folders of another app, as far as I can tell.
+		// However, we do show a Load.. button for picking individual files, that seems to work.
 #elif PPSSPP_PLATFORM(IOS) || PPSSPP_PLATFORM(MAC)
-			// on Darwin, we don't show the 'Browse' text alongside the image
-			// we show just the image, because we don't need to emphasize the button on Darwin
-			// (tvOS has no folder browser.)
-			if (System_GetPropertyBool(SYSPROP_HAS_FOLDER_BROWSER)) {
-				topBar->Add(new Choice(ImageID("I_FOLDER_OPEN"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::BrowseClick);
-			}
+		// on Darwin, we don't show the 'Browse' text alongside the image
+		// we show just the image, because we don't need to emphasize the button on Darwin
+		// (tvOS has no folder browser.)
+		if (System_GetPropertyBool(SYSPROP_HAS_FOLDER_BROWSER)) {
+			topBar->Add(new Choice(ImageID("I_FOLDER_OPEN"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::BrowseClick);
+		}
 #else
-			if ((browseFlags_ & BrowseFlags::BROWSE) && System_GetPropertyBool(SYSPROP_HAS_FOLDER_BROWSER)) {
-				// Collapse the button title on very small screens (Retroid Pocket) or portrait mode.
-				std::string_view browseTitle = (g_display.dp_xres <= 550 || portrait_) ? "" : mm->T("Browse");
-				topBar->Add(new Choice(browseTitle, ImageID("I_FOLDER_OPEN"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::BrowseClick);
-			}
-			if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV) {
-				topBar->Add(new Choice(mm->T("Enter Path"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Add([=](UI::EventParams &) {
-					auto mm = GetI18NCategory(I18NCat::MAINMENU);
-					System_InputBoxGetString(token_, mm->T("Enter Path"), path_.GetPath().ToString(), false, [=](std::string_view responseString, int responseValue) {
-						this->SetPath(Path(responseString));
-						});
+		if ((browseFlags_ & BrowseFlags::BROWSE) && System_GetPropertyBool(SYSPROP_HAS_FOLDER_BROWSER)) {
+			// Collapse the button title on very small screens (Retroid Pocket) or portrait mode.
+			std::string_view browseTitle = (g_display.dp_xres <= 550 || portrait_) ? "" : mm->T("Browse");
+			topBar->Add(new Choice(browseTitle, ImageID("I_FOLDER_OPEN"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::BrowseClick);
+		}
+		if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV) {
+			topBar->Add(new Choice(mm->T("Enter Path"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Add([=](UI::EventParams &) {
+				auto mm = GetI18NCategory(I18NCat::MAINMENU);
+				System_InputBoxGetString(token_, mm->T("Enter Path"), path_.GetPath().ToString(), false, [=](std::string_view responseString, int responseValue) {
+					this->SetPath(Path(responseString));
 					});
-			}
+				});
+		}
 #endif
-		} else if (!pathOnSeparateLine) {
-			topBar->Add(new Spacer(new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
-		}
+	} else if (!pathOnSeparateLine || isRecent) {
+		topBar->Add(new Spacer(new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
+	}
 
-		if (browseFlags_ & BrowseFlags::HOMEBREW_STORE) {
-			topBar->Add(new Choice(mm->T("Homebrew store"), ImageID("I_HOMEBREW_STORE"), new UI::LinearLayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::OnHomebrewStore);
-		}
+	if (browseFlags_ & BrowseFlags::HOMEBREW_STORE) {
+		topBar->Add(new Choice(mm->T("Homebrew store"), ImageID("I_HOMEBREW_STORE"), new UI::LinearLayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::OnHomebrewStore);
+	}
 
-		if (browseFlags_ & BrowseFlags::UPLOAD_BUTTON) {
-			topBar->Add(new Choice(ImageID("I_FOLDER_UPLOAD"), new UI::LinearLayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Add([this](UI::EventParams &e) {
-				screenManager_->push(new UploadScreen(path_.GetPath()));
-			});
-		}
+	if (browseFlags_ & BrowseFlags::UPLOAD_BUTTON) {
+		Choice *uploadChoice = topBar->Add(new Choice(ImageID("I_FOLDER_UPLOAD"), new UI::LinearLayoutParams(WRAP_CONTENT, 64.0f)));
+		uploadChoice->OnClick.Add([this](UI::EventParams &e) {
+			screenManager_->push(new UploadScreen(path_.GetPath()));
+		});
+		// Nowhere to put the files until a game folder has been chosen.
+		uploadChoice->SetEnabledFunc([this]() {
+			return !path_.GetPath().empty();
+		});
+	}
 
-		ChoiceStrip *layoutChoice = topBar->Add(new ChoiceStrip(ORIENT_HORIZONTAL));
-		layoutChoice->AddChoice(ImageID("I_GRID"));
-		layoutChoice->AddChoice(ImageID("I_LINES"));
-		layoutChoice->AddChoice(ImageID("I_LARGE_LIST"));
-		layoutChoice->SetSelection((int)lastViewMode_, false);
-		layoutChoice->OnChoice.Handle(this, &GameBrowser::LayoutChange);
+	ChoiceStrip *layoutChoice = topBar->Add(new ChoiceStrip(ORIENT_HORIZONTAL));
+	layoutChoice->AddChoice(ImageID("I_GRID"));
+	layoutChoice->AddChoice(ImageID("I_LINES"));
+	layoutChoice->AddChoice(ImageID("I_LARGE_LIST"));
+	layoutChoice->SetSelection((int)lastViewMode_, false);
+	layoutChoice->OnChoice.Handle(this, &GameBrowser::LayoutChange);
+	if (!isRecent) {
 		topBar->Add(new Choice(ImageID("I_ROTATE_LEFT"), new LayoutParams(64.0f, 64.0f)))->OnClick.Add([=](UI::EventParams &e) {
 			path_.Refresh();
 			refreshPending_ = true;
 		});
-		topBar->Add(new Choice(ImageID("I_GEAR"), new LayoutParams(64.0f, 64.0f)))->OnClick.Handle(this, &GameBrowser::GridSettingsClick);
+	}
+	topBar->Add(new Choice(ImageID("I_GEAR"), new LayoutParams(64.0f, 64.0f)))->OnClick.Handle(this, &GameBrowser::GridSettingsClick);
 
-		if (gridStyle) {
-			gameList_ = new UI::GridLayoutList(UI::GridLayoutSettings(150 * g_Config.fGameGridScale, 85 * g_Config.fGameGridScale), new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(10, 0, 6, 0)));
-		} else {
-			UI::LinearLayout *gl = new UI::LinearLayoutList(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
-			gl->SetSpacing(4.0f);
-			gameList_ = gl;
-		}
+	if (gridStyle) {
+		gameList_ = new UI::GridLayoutList(UI::GridLayoutSettings(150 * g_Config.fGameGridScale, 85 * g_Config.fGameGridScale), new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(10, 0, 6, 0)));
 	} else {
-		if (gridStyle) {
-			gameList_ = new UI::GridLayoutList(UI::GridLayoutSettings(150 * g_Config.fGameGridScale, 85 * g_Config.fGameGridScale), new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(10, 0, 6, 0)));
-		} else {
-			UI::LinearLayout *gl = new UI::LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
-			gl->SetSpacing(4.0f);
-			gameList_ = gl;
-		}
-		// Until we can come up with a better space to put it (next to the tabs?) let's get rid of the icon config
-		// button on the Recent tab, it's ugly. You can use the button from the other tabs.
-
-		// LinearLayout *gridOptionColumn = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(64.0, 64.0f));
-		// gridOptionColumn->Add(new Spacer(12.0));
-		// gridOptionColumn->Add(new Choice(ImageID("I_GEAR"), new LayoutParams(64.0f, 64.0f)))->OnClick.Handle(this, &GameBrowser::GridSettingsClick);
-		// LinearLayout *grid = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
-		// gameList_->ReplaceLayoutParams(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 0.75));
-		// grid->Add(gameList_);
-		// grid->Add(gridOptionColumn);
-		// Add(grid);
+		UI::LinearLayout *gl = new UI::LinearLayoutList(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
+		gl->SetSpacing(4.0f);
+		gameList_ = gl;
 	}
 	Add(gameList_);
 
@@ -1128,10 +1151,11 @@ void GameBrowser::Refresh() {
 		}
 	}
 
+	DirButton *upButton = nullptr;
 	if (browseFlags_ & BrowseFlags::NAVIGATE) {
 		if (path_.CanNavigateUp()) {
-			gameList_->Add(new DirButton(Path(".."), lastViewMode_, new UI::LinearLayoutParams(UI::FILL_PARENT, UI::FILL_PARENT)))->
-				OnClick.Handle(this, &GameBrowser::NavigateClick);
+			upButton = gameList_->Add(new DirButton(Path(".."), lastViewMode_, new UI::LinearLayoutParams(UI::FILL_PARENT, UI::FILL_PARENT)));
+			upButton->OnClick.Handle(this, &GameBrowser::NavigateClick);
 		}
 
 		// Add any pinned paths before other directories.
@@ -1149,6 +1173,9 @@ void GameBrowser::Refresh() {
 
 	for (size_t i = 0; i < dirButtons.size(); i++) {
 		gameList_->Add(dirButtons[i])->OnClick.Handle(this, &GameBrowser::NavigateClick);
+		if (!focusPath_.empty() && dirButtons[i]->GetPath() == focusPath_ && dirButtons[i]->SetFocus(FocusFlags::CAUSE_RESTORE)) {
+			UI::ScrollFocusedViewIntoView();
+		}
 	}
 
 	for (size_t i = 0; i < gameButtons.size(); i++) {
@@ -1157,11 +1184,22 @@ void GameBrowser::Refresh() {
 		b->OnHoldClick.Handle(this, &GameBrowser::GameButtonHoldClick);
 		b->OnHighlight.Handle(this, &GameBrowser::GameButtonHighlight);
 
-		if (!focusGamePath_.empty() && b->GamePath() == focusGamePath_) {
-			b->SetFocus(FocusFlags::CAUSE_RESTORE);
+		if (!focusPath_.empty() && b->GamePath() == focusPath_ && b->SetFocus(FocusFlags::CAUSE_RESTORE)) {
+			UI::ScrollFocusedViewIntoView();
 		}
 	}
-	focusGamePath_.clear();
+	// A listing that's still loading has no buttons to focus yet.
+	if (!listingPending_) {
+		if (focusFirstItem_) {
+			// The folder's own contents rather than "..", which only shows up first if it's empty.
+			UI::View *first = !dirButtons.empty() ? (UI::View *)dirButtons[0] : !gameButtons.empty() ? (UI::View *)gameButtons[0] : upButton;
+			if (first && first->SetFocus(FocusFlags::CAUSE_RESTORE)) {
+				UI::ScrollFocusedViewIntoView();
+			}
+		}
+		focusFirstItem_ = false;
+		focusPath_.clear();
+	}
 
 	// Show a button to toggle pinning at the very end.
 	if ((browseFlags_ & BrowseFlags::PIN) && !path_.GetPath().empty()) {
@@ -1253,9 +1291,24 @@ void GameBrowser::NavigateClick(UI::EventParams &e) {
 	Path text = button->GetPath();
 	if (button->PathAbsolute()) {
 		path_.SetPath(text);
+	} else if (text.ToString() == "..") {
+		NavigateUp();
+		return;
 	} else {
 		path_.Navigate(text.ToString());
 	}
+	focusFirstItem_ = true;
+	PathChanged();
+}
+
+void GameBrowser::NavigateUp() {
+	// Focus the directory we came out of, in the parent's listing.
+	focusPath_ = path_.GetPath();
+	path_.Navigate("..");
+	PathChanged();
+}
+
+void GameBrowser::PathChanged() {
 	g_Config.currentDirectory = path_.GetPath();
 	// Clear the search filter. This allow for smooth directory navigation using search
 	// (although there's no good way of going up...)

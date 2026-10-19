@@ -369,6 +369,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xa44f6227fdbc12b1, 132, "memcmp", }, // Popolocrois (US)
 	{ 0xa46cc6ea720d5775, 44, "sceGupFrontFace", },
 	{ 0xa54967288afe8f26, 600, "ceil", },
+	{ 0xa5bada68329c05ba, 1904, "medievil_projectile_update", }, // MediEvil Resurrection (US, EU)
 	{ 0xa5ddbbc688e89a4d, 56, "isinf", },
 	{ 0xa615f6bd33195dae, 220, "atvoffroadfuryprodemo_download_frame", }, // ATV Offroad Fury Pro (US) demo
 	{ 0xa662359e30b829e4, 148, "memcmp", },
@@ -432,6 +433,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xc51519f5dab342d4, 224, "cosf", },
 	{ 0xc52c14b9af8c3008, 76, "memcmp", },
 	{ 0xc54eae62622f1e11, 164, "dl_write_bone_matrix_2", },
+	{ 0xc626403884cabcbf, 532, "bejeweled2_draw_dirty_stuff", }, // Bejeweled 2
 	{ 0xc6b29de7d3245198, 656, "starocean_write_stencil" }, // Star Ocean 1 (US)
 	{ 0xc7b1113cfdfedab6, 104, "tonyhawkp8_upload_tutorial_frame", }, // Tony Hawk's Project 8 (US)
 	{ 0xc96e3a087ebf49a9, 100, "dl_write_light_color", },
@@ -497,6 +499,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xf4ea7d2ec943fa02, 224, "sinf", },
 	{ 0xf4f8cdf479dfc4a4, 224, "sinf", },
 	{ 0xf527d906d69005a0, 848, "photokano_download_frame_2", }, // Photo Kano
+	{ 0xf52da867662e04ad, 2024, "gtavcs_plane_control", }, // GTA: Vice City Stories (US, EU)
 	{ 0xf52f993e444b6c52, 44, "sceGupShadeModel", },
 	{ 0xf56641884b36c638, 468, "scalbn", },
 	{ 0xf5e91870b5b76ddc, 288, "motorstorm_download_frame", }, // MotorStorm: Arctic Edge

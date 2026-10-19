@@ -32,7 +32,8 @@ for it:
 | [docs/cpu-equivalence.md](docs/cpu-equivalence.md) | Making the CPU cores agree bit for bit on every host: the `CPUEquivalence` fuzzer, what it found, and the differences still open (several waiting on a hardware test) |
 | [docs/dnas-patches.md](docs/dnas-patches.md) | Game patches installed on a real PSP (Killzone: Liberation's DLC): installing one over PSPLink, and the Fuse-ID-keyed PGD and type 3 PRX that `sceKernelLoadModuleDNAS` decrypts |
 | [docs/kernel-hle-review.md](docs/kernel-hle-review.md) | Findings from a review pass over `Core/HLE/sceKernel*.cpp`, and what was verified clean |
-| [docs/metal-backend.md](docs/metal-backend.md) | What a native Metal backend would take, and why programmable blending is the reason to want one |
+| [docs/shader-compilation.md](docs/shader-compilation.md) | Shader/pipeline compile stutter: where the time goes on MoltenVK (Metal's MSL compile, not glslang), the caches involved, how game-specific shaders are, and how to measure a cold start |
+| [docs/metal-backend.md](docs/metal-backend.md) | The Metal backend: shader translation, the render manager (recording, replay, pass merging), programmable blending, how it was tested against Vulkan, and what isn't done |
 
 ## General instructions
 
@@ -157,8 +158,9 @@ python test.py -g --graphics=software
   (The debug-CRT "Detected memory leaks!" dump after the summary line is normal, not a failure.)
 
 When the thing under test is a commercial game rather than a suite, headless needs `--log` before it prints
-anything (to stderr), and defaults its memory stick to `<exe dir>/memstick` rather than the app's - so the
-firmware you installed in the app isn't there. Pass `--memstick=<the app's memstick>` for any run that is
+anything (to stderr). On Windows it defaults its memory stick to `<exe dir>/memstick` rather than the app's
+(on Mac and Linux it uses the app's default), so the firmware you installed in the app may not be there.
+`test.py` and `frametests.py` pass `<exe dir>/memstick` everywhere. Pass `--memstick=<the app's memstick>` for any run that is
 meant to exercise a real firmware module. Without it, a library whose HLE the config has disabled has
 nothing left to resolve against, and the game does not fall back to our HLE - it gets unresolved imports and
 dies. The tell is a single line early on, `sceMpeg HLE is disabled, but flash0:/kd/mpeg.prx isn't in the
@@ -355,6 +357,10 @@ private:
 ```
 
 But generally follow the surrounding style. Braces are preferred on the same line. Braces are always used even when they could be omitted due the inner part being just a single line.
+
+If a large `else {}` block can be avoided with an early return when writing new code, do that
+instead. Don't wrap existing code in a new `else` and reindent it, either - it makes the diff
+much bigger than the change.
 
 ### Comments
 

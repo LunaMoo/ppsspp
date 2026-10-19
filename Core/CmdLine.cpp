@@ -199,17 +199,18 @@ static const CommandLineParam g_autoParams[] = {
 	{POFF(compare), CmdParamType::Bool, "compare", 'c', "Enable comparison mode", CmdLineMode::Headless},
 	{POFF(bench), CmdParamType::Bool, "bench", 'b', "Enable benchmark mode", CmdLineMode::Headless},
 	{POFF(oldAtrac), CmdParamType::Bool, "old-atrac", '\0', "Use old ATRAC decoder"},
-	{POFF(accurateVdot), CmdParamType::Bool, "accurate-vdot", '\0', "Compute VFPU dot products bit-exactly like the PSP (default; =false for the faster approximation)"},
 	{POFF(jitProfile), CmdParamType::String, "jit-profile", '\0', "Profile the CPU core and write its hottest blocks to FILE on exit"},
 	{POFF(memStickInserted), CmdParamType::BoolInverse, "no-memstick", '\0', "Run with the memory stick removed"},
 	{POFF(log), CmdParamType::String, "log", '\0', "Output log to FILE", CmdLineMode::Application},
 	{POFF(enableLogging), CmdParamType::Bool, "log", '\0', "Full log output, not just emulated printfs", CmdLineMode::Headless},
 	{POFF(screenshotFilename), CmdParamType::String, "screenshot", '\0', "Compare rendered output against a reference screenshot FILE", CmdLineMode::Headless},
 	{POFF(screenshotFilenameSave), CmdParamType::String, "screenshot-save", '\0', "Save rendered screenshot to specified path (PNG if the path ends in .png, BMP otherwise)", CmdLineMode::Headless},
+	{POFF(screenshotDir), CmdParamType::String, "screenshot-dir", '\0', "Save each test's screenshot as DIR/<test path>.png (relative test paths keep their folders)", CmdLineMode::Headless},
 	{POFF(replayEnd), CmdParamType::Int, "replay-end", '\0', "When replaying a GE frame dump, only draw primitives up to this one (1-based)", CmdLineMode::Headless},
 	{POFF(dumpCompat), CmdParamType::Bool, "dump-compat", '\0', "Apply the game's compat.ini settings when replaying a GE frame dump (off by default)", CmdLineMode::Headless},
 	{POFF(hardwareTransform), CmdParamType::Bool, "hardware-transform", '\0', "Transform vertices on the GPU (default true); false transforms them on the CPU", CmdLineMode::Headless},
 	{POFF(vertexJit), CmdParamType::Bool, "vertex-jit", '\0', "Decode vertices with the JIT where the host can (default; =false for the C++ decoder)", CmdLineMode::Headless},
+	{POFF(shaderCache), CmdParamType::Bool, "shader-cache", '\0', "Load and save the per-game shader cache (default true); =false to time shader compiles like a first boot"},
 	{POFF(disableGPUFeatures), CmdParamType::String, "disable-gpu-features", '\0', "Act as if the GPU lacked these, to test the fallbacks: comma-separated clip-distance, cull-distance, depth-clamp, framebuffer-fetch, dual-source-blend", CmdLineMode::Headless},
 	{POFF(depthFilenameSave), CmdParamType::String, "depth-save", '\0', "Save the depth buffer to FILE along with the screenshot (u32 width, u32 height, u16 depths; float depths if FILE ends in .f32)", CmdLineMode::Headless},
 	{POFF(screenshotRenderTarget), CmdParamType::Bool, "screenshot-render-target", '\0', "Take screenshots of the current render target instead of the displayed framebuffer", CmdLineMode::Headless},
@@ -242,6 +243,7 @@ static const CommandLineParam g_autoParams[] = {
 	{POFF(odsLog), CmdParamType::Bool, "odslog", 'o', "Also log through OutputDebugString (Windows)", CmdLineMode::Headless},
 	{POFF(generateInterpreterDispatch), CmdParamType::Bool, "generate-interpreter-dispatch", '\0', "Generate C++ interpreter dispatch code (ExecInstruction) to stdout and exit", CmdLineMode::Headless},
 	{POFF(resolutionScale), CmdParamType::Int, "resolution-scale", '\0', "Set the resolution scale factor"},
+	{POFF(lockedCPUSpeed), CmdParamType::Int, "cpu-mhz", '\0', "Lock the emulated CPU clock at this many MHz (0 = let the game set it)"},
 	{POFF(msaa), CmdParamType::Int, "msaa", '\0', "Set the MSAA level (0 = off, 1 = 2x, 2 = 4x, 3 = 8x)"},
 	{POFF(debuggerPort), CmdParamType::Int, "debugger", '\0', "Enable the WebSocket debugger on this port (0 = pick automatically); see docs/WebSocketDebugger.md"},
 	{POFF(debuggerRunPort), CmdParamType::Int, "debugger-run", '\0', "Like --debugger, but starts running instead of waiting at the entry point", CmdLineMode::Headless},
@@ -344,6 +346,9 @@ int CommandLineOptions::PrintUsage(const char *progname, const char *situationTe
 
 	PRINT_STDOUT("  --graphics=BACKEND    use a different gpu backend\n");
 	PRINT_STDOUT("                        options: gles, software, etc. (also opengl3.1, etc.)\n");
+	if (mode == CmdLineMode::Headless) {
+		PRINT_STDOUT("                        and null, which draws nothing\n");
+	}
 	return 0;
 }
 
@@ -463,9 +468,16 @@ CommandLineParseResult CommandLineOptions::Parse(int argc, const char *argv[], C
 			} else if (restOfOption == "vulkan") {
 				gpuBackend = GPUBackend::VULKAN;
 				softwareRendering = false;
+			} else if (restOfOption == "metal") {
+				gpuBackend = GPUBackend::METAL;
+				softwareRendering = false;
 			} else if (restOfOption == "software") {
 				gpuBackend = GPUBackend::OPENGL;
 				softwareRendering = true;
+			} else if (restOfOption == "null" && mode == CmdLineMode::Headless) {
+				// Runs display lists but draws nothing, for measuring the CPU emulation.
+				nullGraphics = true;
+				softwareRendering = false;
 			} else if (sscanf(restOfOption.c_str(), "gles%lg", &glVersionTemp) == 1 || sscanf(restOfOption.c_str(), "opengl%lg", &glVersionTemp) == 1) {
 				gpuBackend = GPUBackend::OPENGL;
 				softwareRendering = false;
@@ -556,6 +568,10 @@ void CommandLineOptions::ApplyToConfig() const {
 		g_Config.bHardwareTransform = hardwareTransform.value();
 		g_Config.DoNotSaveSetting(&g_Config.bHardwareTransform);
 	}
+	if (shaderCache.has_value()) {
+		g_Config.bShaderCache = shaderCache.value();
+		g_Config.DoNotSaveSetting(&g_Config.bShaderCache);
+	}
 	if (softwareRendering.has_value()) {
 		g_Config.bSoftwareRendering = softwareRendering.value();
 		g_Config.DoNotSaveSetting(&g_Config.bSoftwareRendering);
@@ -609,13 +625,14 @@ void CommandLineOptions::ApplyToConfig() const {
 		g_logManager.DoNotSaveChannels();
 	}
 
+	if (lockedCPUSpeed.has_value()) {
+		g_Config.iLockedCPUSpeed = lockedCPUSpeed.value();
+		g_Config.DoNotSaveSetting(&g_Config.iLockedCPUSpeed);
+	}
+
 	if (oldAtrac.has_value()) {
 		g_Config.bUseOldAtrac = oldAtrac.value();
 		g_Config.DoNotSaveSetting(&g_Config.bUseOldAtrac);
-	}
-	if (accurateVdot.has_value()) {
-		g_Config.bAccurateVdot = accurateVdot.value();
-		g_Config.DoNotSaveSetting(&g_Config.bAccurateVdot);
 	}
 	if (jitProfile.has_value()) {
 		g_Config.sJitProfileFile = jitProfile.value();

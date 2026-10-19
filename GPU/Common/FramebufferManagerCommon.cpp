@@ -1078,7 +1078,7 @@ void FramebufferManagerCommon::ShiftDepthForOffsetRendering(VirtualFramebuffer *
 	if (w <= 0) {
 		return;
 	}
-	Draw::Framebuffer *temp = GetTempFBO(TempFBO::DEPTH_SHIFT, vfb->renderWidth, vfb->renderHeight);
+	Draw::Framebuffer *temp = GetTempFBO(TempFBO::DEPTH_SHIFT, vfb->renderWidth, vfb->renderHeight, vfb->fbo->MultiSampleLevel());
 	if (!temp) {
 		return;
 	}
@@ -1988,6 +1988,7 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 	}
 
 	bool creating = old.bufferWidth == 0;
+	vfb->multisampled = ShouldMultisample(vfb);
 	if (creating) {
 		INFO_LOG(Log::FrameBuf, "Creating %s FBO at %08x/%08x stride=%d %dx%d (force=%d)", GeBufferFormatToString(vfb->fb_format), vfb->fb_address, vfb->z_address, vfb->fb_stride, vfb->bufferWidth, vfb->bufferHeight, (int)force);
 	} else {
@@ -2020,7 +2021,7 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 
 	gpuStats.perFrame.numFBOsCreated++;
 
-	vfb->fbo = draw_->CreateFramebuffer({ vfb->renderWidth, vfb->renderHeight, 1, GetFramebufferLayers(), msaaLevel_, true, tag });
+	vfb->fbo = draw_->CreateFramebuffer({ vfb->renderWidth, vfb->renderHeight, 1, GetFramebufferLayers(), vfb->multisampled ? msaaLevel_ : 0, true, tag });
 	if (Memory::IsVRAMAddress(vfb->fb_address) && vfb->fb_stride != 0) {
 		NotifyMemInfo(MemBlockFlags::ALLOC, vfb->fb_address, vfb->BufferByteSize(RASTER_COLOR), tag, len);
 	}
@@ -2039,7 +2040,8 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 			if (vfb->usageFlags & FB_USAGE_RENDER_DEPTH) {
 				BlitFramebuffer(vfb, 0, 0, &old, 0, 0, std::min((u16)oldWidth, std::min(vfb->bufferWidth, vfb->width)), std::min((u16)oldHeight, std::min(vfb->height, vfb->bufferHeight)), 0, RASTER_DEPTH, "BlitDepth_ResizeFramebufFBO");
 			}
-			if (!skipCopy && vfb->fb_format != GE_FORMAT_565) {
+			// A color framebuffer from CreateRAMFramebuffer has no depth/stencil buffer to copy from.
+			if (!skipCopy && vfb->fb_format != GE_FORMAT_565 && old.fbo->HasDepthStencil()) {
 				// Keep the stencil too (Need for Speed Shift stencil tests right after its framebuffer grows from 480 to
 				// 512 wide). D3D11 has no separate stencil copy, but copies it along with the depth above.
 				const int stencilW = std::min(old.renderWidth, vfb->renderWidth);
@@ -3168,6 +3170,12 @@ static const char *TempFBOReasonToString(TempFBO reason) {
 	return "";
 }
 
+// Only full size framebuffers get MSAA. Smaller ones are mostly effects (blur, bloom), and MSAA changes those
+// (Syphon Filter: Logan's Shadow grows a glow around lit floor panels).
+bool FramebufferManagerCommon::ShouldMultisample(const VirtualFramebuffer *vfb) const {
+	return vfb->bufferWidth >= 480 && vfb->bufferHeight >= 272;
+}
+
 Draw::Framebuffer *FramebufferManagerCommon::CopyColorSample0(VirtualFramebuffer *vfb) {
 	if (!vfb->fbo || vfb->fbo->MultiSampleLevel() == 0) {
 		return nullptr;
@@ -3189,8 +3197,11 @@ Draw::Framebuffer *FramebufferManagerCommon::CopyColorSample0(VirtualFramebuffer
 	return copy;
 }
 
-Draw::Framebuffer *FramebufferManagerCommon::GetTempFBO(TempFBO reason, u16 w, u16 h) {
-	u64 key = ((u64)reason << 48) | ((u32)w << 16) | h;
+Draw::Framebuffer *FramebufferManagerCommon::GetTempFBO(TempFBO reason, u16 w, u16 h, int msaaLevel) {
+	if (reason != TempFBO::DEPTH_SHIFT) {
+		msaaLevel = 0;
+	}
+	u64 key = ((u64)msaaLevel << 56) | ((u64)reason << 48) | ((u32)w << 16) | h;
 	auto it = tempFBOs_.find(key);
 	if (it != tempFBOs_.end()) {
 		it->second.last_frame_used = gpuStats.totals.numFlips;
@@ -3198,8 +3209,6 @@ Draw::Framebuffer *FramebufferManagerCommon::GetTempFBO(TempFBO reason, u16 w, u
 	}
 
 	bool z_stencil = reason == TempFBO::STENCIL || reason == TempFBO::DEPTH_SHIFT;
-	// The depth shift copies to and from a framebuffer, which needs the same samples.
-	const int msaaLevel = reason == TempFBO::DEPTH_SHIFT ? msaaLevel_ : 0;
 	char name[128];
 	snprintf(name, sizeof(name), "tempfbo_%s_%dx%d", TempFBOReasonToString(reason), w / renderScaleFactor_, h / renderScaleFactor_);
 

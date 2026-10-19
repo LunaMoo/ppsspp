@@ -237,8 +237,6 @@ public:
 	bool bWow64WarningDismissed;
 	bool bForceLagSync;
 	bool bFuncReplacements;
-	// Compute the VFPU's dot products (vdot, vmmul, vtfm and the rest) bit-exactly like the PSP.
-	bool bAccurateVdot;
 	bool bHideSlowWarnings;
 	bool bHideStateWarnings;
 	uint32_t uJitDisableFlags;
@@ -253,6 +251,9 @@ public:
 	bool bCompressSymbols;
 	bool bCacheFullIsoInRam;
 	bool bAutoUpgradeFirmware;
+	// The game screen's "Compress game" (UI/GamePacker.h).
+	int iCSOPreset;  // CSOCompress::Preset: 0 = Best, 1 = PSP Compatible
+	bool bPackKeepOriginal;
 	int iRemoteISOPort; // Also used for serving a local remote debugger.
 	std::string sLastRemoteISOServer;
 	int iLastRemoteISOPort;
@@ -385,7 +386,6 @@ public:
 	bool bReportAccurateFreeStorageSpace;
 	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive
 	int iSkipGPUReadbackMode;  // 0 = off, 1 = skip, 2 = to texture
-	int iSplineBezierQuality; // 0 = low , 1 = Intermediate , 2 = High
 	bool bShaderCache;  // Hidden ini-only setting, useful for debugging shader compile times.
 	bool bUberShaderVertex;
 	int iDefaultTab;
@@ -484,8 +484,7 @@ public:
 	int iGameBrowserView2;
 	int iGameBrowserView3;
 	int iGameBrowserView4;
-	// The old GridView bools, only read, to migrate to iGameBrowserView*. -1 if missing.
-	int iLegacyGridView1;
+	// The old GridView bool, only read, to migrate to iGameBrowserView4. -1 if missing.
 	int iLegacyGridView4;
 
 	// Right analog binding

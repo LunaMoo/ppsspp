@@ -81,8 +81,8 @@ public:
 	bool GetCurrentDrawAsDebugVertices(GECommand cmd, GEPrimitiveType prim, GEPrimitiveType *outPrim, int count, std::vector<GPUDebugVertex> *vertices, std::vector<u16> *indices, int *lowerIndexBound, TransformStats *stats, DebugVertexFlags flags) const;
 	int GetCurrentPrim(GEPrimitiveType *prim, GECommand *outCmd) const;  // Return value has the count.
 
-	// FinishInitOnMainThread runs on the main thread, of course.
-	virtual void FinishInitOnMainThread() {}
+	// True while pipelines from the shader cache are still being created, in the background.
+	virtual bool IsLoadingShaderCache() const { return false; }
 
 	Draw::DrawContext *GetDrawContext() {
 		return draw_;
@@ -193,6 +193,18 @@ public:
 	void Execute_MorphWeight(u32 op, u32 diff);
 
 	void Execute_ImmVertexAlphaPrim(u32 op, u32 diff);
+
+	// Matrix loads, with a fast path for the DATA commands following a NUM. SoftGPU has its own.
+	void Execute_WorldMtxNum(u32 op, u32 diff);
+	void Execute_WorldMtxData(u32 op, u32 diff);
+	void Execute_ViewMtxNum(u32 op, u32 diff);
+	void Execute_ViewMtxData(u32 op, u32 diff);
+	void Execute_ProjMtxNum(u32 op, u32 diff);
+	void Execute_ProjMtxData(u32 op, u32 diff);
+	void Execute_TgenMtxNum(u32 op, u32 diff);
+	void Execute_TgenMtxData(u32 op, u32 diff);
+	void Execute_BoneMtxNum(u32 op, u32 diff);
+	void Execute_BoneMtxData(u32 op, u32 diff);
 
 	void Execute_Unknown(u32 op, u32 diff);
 
@@ -316,6 +328,7 @@ public:
 	void NotifyFlush();
 
 protected:
+	DLResult RunDLQueue();
 	// While debugging is active, these may block.
 	void NotifyDisplay(u32 framebuf, u32 stride, int format);
 
@@ -377,6 +390,7 @@ protected:
 	TextureCacheCommon *textureCache_ = nullptr;
 
 	bool flushOnParams_ = true;
+	bool listEndedSinceDepthWait_ = false;
 
 	GraphicsContext *gfxCtx_;
 	Draw::DrawContext *draw_ = nullptr;

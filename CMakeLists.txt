@@ -368,6 +368,17 @@ if(NOT LIBRETRO AND NOT IOS AND NOT HEADLESS_CROSS AND NOT ANDROID)
 	else()
 		message(WARNING "Fontconfig not found - SDL3_ttf fallback fonts for missing glyphs will be limited")
 	endif()
+	find_package(PkgConfig QUIET)
+	if(PKG_CONFIG_FOUND)
+		pkg_check_modules(FRIBIDI QUIET IMPORTED_TARGET fribidi)
+	endif()
+	if(FRIBIDI_FOUND)
+		list(APPEND SDL_TTF_LIB_TARGET PkgConfig::FRIBIDI)
+		add_compile_definitions(USE_SDL3_TTF_FRIBIDI)
+		message(STATUS "Using FriBidi for SDL3_ttf mixed-direction text")
+	else()
+		message(WARNING "FriBidi not found - SDL3_ttf will render text mixing right-to-left and left-to-right partly reversed")
+	endif()
 endif()
 
 
@@ -1124,6 +1135,11 @@ if(WIN32)
 	list(APPEND GlslangLibs spirv-cross-hlsl)
 endif()
 
+# The Metal backend. Not in the libretro cores, which get their graphics context from the frontend.
+if(APPLE AND NOT LIBRETRO)
+	list(APPEND GlslangLibs spirv-cross-msl)
+endif()
+
 add_subdirectory(Common)
 
 if(USE_SYSTEM_ZSTD)
@@ -1327,7 +1343,15 @@ if(HEADLESS)
 			SDL/SDLUtil.h
 		)
 	endif()
-	if(APPLE)
+	if(IOS)
+		list(APPEND HeadlessSource
+			Common/Render/Text/draw_text_cocoa.mm
+			Common/Render/Text/draw_text_cocoa.h
+			ios/HeadlessMain.mm
+		)
+		set_source_files_properties(Common/Render/Text/draw_text_cocoa.mm ios/HeadlessMain.mm
+			PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	elseif(APPLE)
 		list(APPEND HeadlessSource
 			Common/Render/Text/draw_text_cocoa.mm
 			Common/Render/Text/draw_text_cocoa.h
@@ -1357,8 +1381,14 @@ if(HEADLESS)
 			Windows/W32Util/Misc.h
 		)
 	endif()
-	add_executable(PPSSPPHeadless ${HeadlessSource})
-	target_link_libraries(PPSSPPHeadless ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} Core)
+	if(IOS)
+		# An app bundle, set up further down with the iOS app (see ios/HeadlessMain.mm).
+		add_executable(PPSSPPHeadless MACOSX_BUNDLE ${HeadlessSource})
+		target_link_libraries(PPSSPPHeadless ${CMAKE_THREAD_LIBS_INIT} Core)
+	else()
+		add_executable(PPSSPPHeadless ${HeadlessSource})
+		target_link_libraries(PPSSPPHeadless ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} Core)
+	endif()
 	if(SDL_LIB_TARGET)
 		target_link_libraries(PPSSPPHeadless ${SDL_LIB_TARGET})
 	endif()
@@ -1393,6 +1423,7 @@ if(UNITTEST)
 		unittest/TestVFS.cpp
 		unittest/TestZipSlip.cpp
 		unittest/TestLzrc.cpp
+		unittest/TestCwCheat.cpp
 		unittest/TestMpegCsc.cpp
 		unittest/TestSplineTessellation.cpp
 		unittest/TestGEMath.cpp
@@ -1698,6 +1729,36 @@ if(IOS AND NOT LIBRETRO)
 		COMMAND plutil -replace CFBundleDisplayName -string "${DISPLAY_NAME}" "${APP_DIR_NAME}/Info.plist"
 		COMMAND plutil -replace CFBundleIdentifier -string "${BUNDLE_IDENTIFIER}" "${APP_DIR_NAME}/Info.plist"
 	)
+
+	if(HEADLESS AND NOT TVOS)
+		# PPSSPPHeadless as an app of its own (org.ppsspp.headless), for running frame dumps on a
+		# device. Signed for development, so devicectl can copy files in and out of its container.
+		target_link_libraries(PPSSPPHeadless
+			"${CMAKE_CURRENT_SOURCE_DIR}/ios/MoltenVK/MoltenVK.xcframework/${MOLTENVK_SLICE}/libMoltenVK.a"
+			"-framework Foundation -framework UIKit -framework CoreGraphics -framework CoreText -framework QuartzCore -framework Metal -framework IOSurface -framework AudioToolbox -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework UniformTypeIdentifiers"
+		)
+		if(NOT ICONV_LIBRARY)
+			target_link_libraries(PPSSPPHeadless iconv)
+		endif()
+		set(HEADLESS_APP_DIR "$<TARGET_FILE_DIR:PPSSPPHeadless>")
+		add_custom_command(TARGET PPSSPPHeadless POST_BUILD
+			COMMAND mkdir -p \"${HEADLESS_APP_DIR}\"
+			COMMAND tar -c -C ${CMAKE_CURRENT_BINARY_DIR} --exclude .DS_Store --exclude .git assets | tar -x -C \"${HEADLESS_APP_DIR}\"
+		)
+		set_target_properties(PPSSPPHeadless PROPERTIES
+			XCODE_GENERATE_SCHEME YES
+			MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Headless-Info.plist"
+			XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER org.ppsspp.headless
+			XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET}
+			XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+			XCODE_ATTRIBUTE_ENABLE_BITCODE NO
+			XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
+			XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+		)
+		if(DEVELOPMENT_TEAM_ID)
+			set_target_properties(PPSSPPHeadless PROPERTIES XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ${DEVELOPMENT_TEAM_ID})
+		endif()
+	endif()
 endif()
 
 if(MACOSX AND NOT IOS)

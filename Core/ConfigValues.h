@@ -132,6 +132,7 @@ enum class GPUBackend {
 	OPENGL = 0,
 	DIRECT3D11 = 2,
 	VULKAN = 3,
+	METAL = 4,
 };
 
 enum class DepthRasterMode {
@@ -233,12 +234,6 @@ enum class ShowStatusFlags {
 	BATTERY_PERCENT = 1 << 3,
 };
 
-enum class SplineQuality {
-	LOW_QUALITY = 0,
-	MEDIUM_QUALITY = 1,
-	HIGH_QUALITY = 2,
-};
-
 enum class DumpFileType {
 	EBOOT = (1 << 0),
 	PRX = (1 << 1),
@@ -282,6 +277,7 @@ enum class DebugOverlay : int {
 	GPU_PROFILE,
 	GPU_ALLOCATOR,
 	FRAMEBUFFER_LIST,
+	JIT_STATS,
 };
 
 // Android-only for now

@@ -49,6 +49,9 @@
 #include "Common/StringUtils.h"
 #include "Common/Thread/ThreadManager.h"
 #include "Common/GPU/Vulkan/VulkanGraphicsContext.h"
+#if PPSSPP_API(METAL)
+#include "Common/GPU/Metal/MetalGraphicsContext.h"
+#endif
 #include "Core/CmdLine.h"
 #include "Common/Net/HTTPRequest.h"
 #include "Core/Config.h"
@@ -82,6 +85,7 @@
 
 static Path g_comparisonScreenshot;
 static Path g_screenshotSavePath;
+static Path g_screenshotDir;
 static Path g_depthSavePath;
 static bool g_screenshotRenderTarget = false;
 static Path g_screenshotDiffPath;
@@ -125,6 +129,11 @@ jobject Android_GetActivity(JNIEnv *env) {
 bool System_AudioRecordingIsAvailable() { return false; }
 #endif
 
+#if PPSSPP_PLATFORM(IOS)
+// Defined by the iOS app (ios/main.mm), which this doesn't link.
+bool System_AudioRecordingIsAvailable() { return false; }
+#endif
+
 // Temporary hacks around annoying linking errors.
 void NativeFrame(GraphicsContext *graphicsContext) { }
 void NativeResized() { }
@@ -141,7 +150,12 @@ float System_GetPropertyFloat(SystemProperty prop) { return -1.0f; }
 bool System_GetPropertyBool(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_IS_HEADLESS: return true;
+#if PPSSPP_PLATFORM(IOS)
+	// Not without a debugger attached, which a devicectl launch doesn't have.
+	case SYSPROP_CAN_JIT: return false;
+#else
 	case SYSPROP_CAN_JIT: return true;
+#endif
 	default:
 		return false;
 	}
@@ -366,8 +380,8 @@ static GraphicsContext *CreateGraphicsContext(GPUCore gpuCore, std::string **dev
 	// one either. These still run fine with --graphics=software, which needs no graphics context.
 	*deviceSetting = nullptr;
 	return nullptr;
-#elif PPSSPP_PLATFORM(ANDROID)
-	// Both hardware backends are created up front, with no window (see the caller).
+#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
+	// The hardware backends are created up front, with no window (see the caller).
 	*deviceSetting = nullptr;
 	return nullptr;
 #else
@@ -411,7 +425,7 @@ struct AutoTestOptions {
 // swaps with interval 0). D3D11 presents to a hidden window, which could.
 static void EndDrawFrame(Draw::DrawContext *draw) {
 	draw->EndFrame();
-	if (GetGPUBackend() == GPUBackend::VULKAN || GetGPUBackend() == GPUBackend::OPENGL) {
+	if (GetGPUBackend() == GPUBackend::VULKAN || GetGPUBackend() == GPUBackend::OPENGL || GetGPUBackend() == GPUBackend::METAL) {
 		draw->Present(Draw::PresentMode::FIFO);
 	}
 }
@@ -716,6 +730,11 @@ int RunTests(GraphicsContext *graphicsContext, CoreParameter &coreParameter, con
 			missingTests.push_back(testFilenames[i]);
 			continue;
 		}
+		if (!g_screenshotDir.empty()) {
+			const Path rel(coreParameter.fileToStart.IsAbsolute() ? coreParameter.fileToStart.GetFilename() : testFilenames[i]);
+			g_screenshotSavePath = g_screenshotDir / (rel.ToString() + ".png");
+			File::CreateFullPath(g_screenshotSavePath.NavigateUp());
+		}
 		if (testOptions.compare) {
 			printf("%s:\n", coreParameter.fileToStart.c_str());
 		}
@@ -778,7 +797,12 @@ public:
 	}
 };
 
+#if PPSSPP_PLATFORM(IOS)
+// An iOS app can't be a bare executable: ios/HeadlessMain.mm starts UIKit and calls this.
+int HeadlessMain(int argc, const char* argv[]) {
+#else
 int main(int argc, const char* argv[]) {
+#endif
 	PROFILE_INIT();
 	TimeInit();
 #if PPSSPP_PLATFORM(WINDOWS)
@@ -791,7 +815,7 @@ int main(int argc, const char* argv[]) {
 		perror("Unable to ignore SIGPIPE");
 	}
 #endif
-#if PPSSPP_PLATFORM(MAC)
+#if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
 	// MoltenVK logs its setup and every unsupported feature to the console, which mixes into the
 	// test output. Only its errors, unless asked for more.
 	setenv("MVK_CONFIG_LOG_LEVEL", "1", 0);
@@ -896,6 +920,8 @@ int main(int argc, const char* argv[]) {
 			fprintf(stderr, "Unknown PSP model '%s' - expected 01g..12g or any\n", cmdLineOptions.unpackUpdaterModel.value().c_str());
 			return 1;
 		}
+		// A directory that isn't there yet will be empty, so the unpack can skip checking for each file.
+		unpackOptions.outputDirIsEmpty = !File::Exists(Path(cmdLineOptions.unpackUpdater.value()));
 		PSARUnpackStats stats;
 		std::string unpackError;
 		const bool ok = UnpackUpdater(Path(cmdLineOptions.bootFilenames[0]), Path(cmdLineOptions.unpackUpdater.value()), unpackOptions, &stats, &unpackError);
@@ -998,7 +1024,6 @@ int main(int argc, const char* argv[]) {
 	// Defaulting this to false silently ran everything on OpenGL, which hangs games early in boot
 	// under Mesa llvmpipe on Linux/WSL.
 	g_Config.bSoftwareRendering = cmdLineOptions.softwareRendering.value_or(true);
-	g_Config.iSplineBezierQuality = 2;
 	g_Config.bHighQualityDepth = true;
 	g_Config.bMemStickInserted = true;
 	g_Config.iMemStickSizeGB = 16;
@@ -1041,7 +1066,8 @@ int main(int argc, const char* argv[]) {
 		g_Config.iForceEnableHLE = 0xFFFFFFFF & ~g_Config.iDisableHLE;
 	}
 
-	CPUCore cpuCore = CPUCore::JIT;
+	// Where there's no JIT (iOS), allocating its executable memory gets the process killed.
+	CPUCore cpuCore = System_GetPropertyBool(SYSPROP_CAN_JIT) ? CPUCore::JIT : CPUCore::IR_INTERPRETER;
 	if (cmdLineOptions.cpuCore.has_value()) {
 		cpuCore = cmdLineOptions.cpuCore.value();
 	}
@@ -1059,7 +1085,13 @@ int main(int argc, const char* argv[]) {
 		case GPUBackend::VULKAN:
 			gpuCore = GPUCORE_VULKAN;
 			break;
+		case GPUBackend::METAL:
+			gpuCore = GPUCORE_METAL;
+			break;
 		}
+	}
+	if (cmdLineOptions.nullGraphics.value_or(false)) {
+		gpuCore = GPUCORE_NULL;
 	}
 
 	// Time to set up graphics
@@ -1067,9 +1099,9 @@ int main(int argc, const char* argv[]) {
 	std::string *deviceSetting = nullptr;
 	void *window = nullptr;
 	WindowDesc windowDesc;
-	if (g_Config.bSoftwareRendering) {
+	if (g_Config.bSoftwareRendering || gpuCore == GPUCORE_NULL) {
 		// For software rendering, we just create a dummy graphics context (to share as much code as possible).
-		// We don't bother with a window.
+		// We don't bother with a window. The null GPU needs no draw context either.
 		graphicsContext = new NullGraphicsContext();
 	} else {
 #if defined(HEADLESS_NO_SDL)
@@ -1082,6 +1114,12 @@ int main(int argc, const char* argv[]) {
 			vulkanContext->SetOffscreen(480, 272);
 			graphicsContext = vulkanContext;
 			deviceSetting = &g_Config.sVulkanDevice;
+#if PPSSPP_API(METAL)
+		} else if (gpuCore == GPUCORE_METAL) {
+			MetalGraphicsContext *metalContext = new MetalGraphicsContext();
+			metalContext->SetOffscreen(480, 272);
+			graphicsContext = metalContext;
+#endif
 #if PPSSPP_PLATFORM(MAC) && defined(SDL)
 		} else if (gpuCore == GPUCORE_GLES) {
 			// So does OpenGL, into a framebuffer object of its own.
@@ -1094,6 +1132,9 @@ int main(int argc, const char* argv[]) {
 		} else {
 #if PPSSPP_PLATFORM(ANDROID)
 			fprintf(stderr, "Only --graphics=vulkan and --graphics=gles are supported on Android\n");
+			return 1;
+#elif PPSSPP_PLATFORM(IOS)
+			fprintf(stderr, "Only --graphics=vulkan is supported on iOS\n");
 			return 1;
 #else
 			// TODO: Will we need a larger window for higher resolutions? Well, not if we use buffered rendering.
@@ -1155,19 +1196,29 @@ int main(int argc, const char* argv[]) {
 	coreParameter.pixelHeight = 272 * coreParameter.renderScaleFactor;
 	coreParameter.fastForward = true;
 
+#if PPSSPP_PLATFORM(IOS)
+	// GetExeDirectory() knows nothing on iOS, but argv[0] is the executable inside the .app,
+	// next to the bundled assets.
+	Path exePath = Path(std::string(argv[0])).NavigateUp();
+#else
 	Path exePath = File::GetExeDirectory();
+#endif
 
 	// --memstick, applied by ApplyToConfig() further up, wins. This runs after it, so without the
-	// check the default below would silently overwrite whatever was asked for.
+	// check the default below would silently overwrite whatever was asked for. Otherwise it's the app's
+	// default, except on Windows (next to the exe, like a portable install) and iOS. The test runners
+	// pass their own.
 	if (!cmdLineOptions.memStick.has_value()) {
-		// TODO: Share this derivation with the main build.
 #if PPSSPP_PLATFORM(WINDOWS)
 		// Mount a filesystem
 		g_Config.memStickDirectory = exePath / "memstick";
 		File::CreateDir(g_Config.memStickDirectory, true);
 		CreateSysDirectories();
+#elif PPSSPP_PLATFORM(IOS)
+		// The app container's root isn't writable.
+		g_Config.memStickDirectory = Path(std::string(getenv("HOME"))) / "Library" / "memstick";
 #elif !PPSSPP_PLATFORM(ANDROID)
-		g_Config.memStickDirectory = Path(std::string(getenv("HOME"))) / ".ppsspp";
+		g_Config.memStickDirectory = GetDefaultDesktopMemStickDirectory();
 #endif
 	}
 	// The memstick's NAND, unless --nand says otherwise.
@@ -1254,6 +1305,9 @@ int main(int argc, const char* argv[]) {
 	if (cmdLineOptions.screenshotFilename.has_value()) {
 		SetComparisonScreenshot(Path(std::string(cmdLineOptions.screenshotFilename.value())), testOptions.maxScreenshotError);
 	}
+	if (cmdLineOptions.screenshotDir.has_value()) {
+		g_screenshotDir = Path(cmdLineOptions.screenshotDir.value());
+	}
 	if (cmdLineOptions.screenshotFilenameSave.has_value()) {
 		SetScreenshotSavePath(Path(std::string(cmdLineOptions.screenshotFilenameSave.value())));
 	}
@@ -1336,10 +1390,14 @@ int main(int argc, const char* argv[]) {
 	if (stateToLoad) {
 		g_stateLoadPending = true;
 		// Queued now, actually applied by SaveState::Process() once the game is up and running.
-		SaveState::Load(Path(stateToLoad), -1, [](SaveState::Status status, std::string_view message, std::string_view) {
+		SaveState::Load(Path(stateToLoad), -1, [](SaveState::Status status, std::string_view message, std::string_view metadata) {
 			// The message already reads as a full sentence, e.g. "Failed to load state: <reason>".
-			fprintf(stderr, "%.*s\n", (int)message.size(), message.data());
+			fprintf(stderr, "%.*s\n", STR_VIEW(message));
 			if (status == SaveState::Status::FAILURE) {
+				// Which version saved the state.
+				if (!metadata.empty()) {
+					fprintf(stderr, "%.*s\n", STR_VIEW(metadata));
+				}
 				g_stateLoadFailed = true;
 			}
 			g_stateLoadPending = false;
@@ -1376,7 +1434,7 @@ int main(int argc, const char* argv[]) {
 		ShutdownWebServer();
 	}
 
-#if PPSSPP_PLATFORM(ANDROID) || defined(HEADLESS_NO_SDL)
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS) || defined(HEADLESS_NO_SDL)
 	// ... see above
 #else
 	if (window) {
