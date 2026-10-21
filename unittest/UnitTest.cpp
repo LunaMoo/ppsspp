@@ -4439,6 +4439,7 @@ bool TestLzrc();
 bool TestKirkEcdsa();
 bool TestKirkEcdsaBench();
 bool TestCwCheat();
+bool TestMemoryScanner();
 bool TestMpegCsc();
 bool TestSplineTessellation();
 bool TestGEMath();
@@ -5240,6 +5241,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(KirkEcdsa),
 	TEST_ITEM(KirkEcdsaBench),
 	TEST_ITEM(CwCheat),
+	TEST_ITEM(MemoryScanner),
 	TEST_ITEM(MpegCsc),
 	TEST_ITEM(SplineTessellation),
 	TEST_ITEM(GEMath),

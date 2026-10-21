@@ -1398,6 +1398,7 @@ if(UNITTEST)
 		unittest/TestLzrc.cpp
 		unittest/TestKirk.cpp
 		unittest/TestCwCheat.cpp
+		unittest/TestMemoryScanner.cpp
 		unittest/TestMpegCsc.cpp
 		unittest/TestSplineTessellation.cpp
 		unittest/TestGEMath.cpp

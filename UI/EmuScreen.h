@@ -165,6 +165,7 @@ private:
 	bool releaseMapperInput_ = false;
 
 	UI::Button *cardboardDisableButton_ = nullptr;
+	UI::Button *memoryScannerButton_ = nullptr;
 
 	std::string extraAssertInfoStr_;
 
@@ -194,3 +195,4 @@ bool MustRunBehind();
 bool ShouldRunBehind();
 // The orientation of the output the game goes to (like a TV), if there's one. Its display layout is the one for that.
 bool GetGameOutputOrientation(ScreenManager *screenManager, DeviceOrientation *orientation);
+bool MemoryScannerAvailable();

@@ -701,6 +701,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/ConfigSettings.cpp \
   $(SRC)/Core/CoreTiming.cpp \
   $(SRC)/Core/CwCheat.cpp \
+  $(SRC)/Core/MemoryScanner.cpp \
   $(SRC)/Core/EmuThread.cpp \
   $(SRC)/Core/FrameTiming.cpp \
   $(SRC)/Core/HDRemaster.cpp \
@@ -1193,6 +1194,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/BaseScreens.cpp \
   $(SRC)/UI/Background.cpp \
   $(SRC)/UI/CwCheatScreen.cpp \
+  $(SRC)/UI/MemoryScannerScreen.cpp \
   $(SRC)/UI/InstallPkgScreen.cpp \
   $(SRC)/UI/FirmwareScreen.cpp \
   $(SRC)/UI/InstallUpdateScreen.cpp \
@@ -1271,6 +1273,7 @@ ifeq ($(UNITTEST),1)
     $(SRC)/unittest/TestLzrc.cpp \
     $(SRC)/unittest/TestKirk.cpp \
     $(SRC)/unittest/TestCwCheat.cpp \
+    $(SRC)/unittest/TestMemoryScanner.cpp \
     $(SRC)/unittest/TestMpegCsc.cpp \
     $(SRC)/unittest/TestSplineTessellation.cpp \
     $(SRC)/unittest/TestGEMath.cpp \
