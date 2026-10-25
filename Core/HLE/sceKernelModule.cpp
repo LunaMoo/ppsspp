@@ -1676,6 +1676,12 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		newptr = new u8[maxElfSize];
 		elfSize = maxElfSize;
 		ptr = newptr;
+		// Modules from a NAND dumped off a real PSP are signchecked to that console (see
+		// pspLooksSignChecked), so they need its Fuse ID even when the caller has none for us.
+		u32 configFuseId[2];
+		if (!fuseId && pspParseFuseId(g_Config.sFuseID, configFuseId)) {
+			fuseId = configFuseId;
+		}
 		int decryptedSize = pspDecryptPRX(in, (u8*)ptr, head->psp_size, prxSeed, fuseId);
 		// If decryption got us nowhere, the PRX may simply not be encrypted - in which case the ELF
 		// starts right after the header. Check the source buffer, not the destination: on the paths
@@ -1690,7 +1696,14 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		// Don't accept ELFs over 24MB, ones bigger than the buffer we allocated for them - nor ones
 		// with negative size, of course.
 		if (decryptedSize < 0 || decryptedSize > 24 * 1024 * 1024 || decryptedSize > (int)maxElfSize) {
-			*error_string = StringFromFormat("ELF/PRX corrupt, unreasonable decrypted size: %d", (u32)decryptedSize);
+			if (decryptedSize < 0 && pspLooksSignChecked(in)) {
+				// Not corrupt - flashed on a real PSP (CFW installers do this too), and keyed to it.
+				*error_string = fuseId
+					? "PRX is signchecked to a different PSP than the Fuse ID set (FuseID in ppsspp.ini)"
+					: "PRX is signchecked to the PSP it was flashed on - set that PSP's Fuse ID (FuseID in ppsspp.ini, 12 hex digits)";
+			} else {
+				*error_string = StringFromFormat("ELF/PRX corrupt, unreasonable decrypted size: %d", (u32)decryptedSize);
+			}
 			delete [] newptr;
 			module->Cleanup();
 			kernelObjects.Destroy<PSPModule>(module->GetUID());
