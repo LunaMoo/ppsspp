@@ -49,6 +49,9 @@
     <ClCompile Include="..\..\UI\CwCheatScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\UI\MemoryScannerScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\UI\DeveloperSettingsPages.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
@@ -238,6 +241,9 @@
       <Filter>Screens</Filter>
     </ClInclude>
     <ClInclude Include="..\..\UI\CwCheatScreen.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\UI\MemoryScannerScreen.h">
       <Filter>Screens</Filter>
     </ClInclude>
     <ClInclude Include="..\..\UI\DeveloperSettingsPages.h">

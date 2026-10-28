@@ -321,6 +321,9 @@
     <ClCompile Include="CoreTiming.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="MemoryScanner.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="Loaders.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -1780,6 +1783,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="CoreTiming.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="MemoryScanner.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="Loaders.h">

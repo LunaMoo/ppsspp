@@ -3646,6 +3646,7 @@ bool TestZArchive();
 bool TestPS1Eboot();
 bool TestLzrc();
 bool TestCwCheat();
+bool TestMemoryScanner();
 bool TestMpegCsc();
 bool TestSplineTessellation();
 bool TestGEMath();
@@ -4176,6 +4177,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(PS1Eboot),
 	TEST_ITEM(Lzrc),
 	TEST_ITEM(CwCheat),
+	TEST_ITEM(MemoryScanner),
 	TEST_ITEM(MpegCsc),
 	TEST_ITEM(SplineTessellation),
 	TEST_ITEM(GEMath),

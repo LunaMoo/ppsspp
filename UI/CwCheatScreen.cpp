@@ -256,6 +256,11 @@ void CwCheatScreen::CreateSettingsViews(UI::ViewGroup *leftColumn) {
 #endif
 	optionsGroup->Add(new Choice(di->T("Disable All")))->OnClick.Handle(this, &CwCheatScreen::OnDisableAll);
 	optionsGroup->Add(new PopupSliderChoice(&g_Config.iCwCheatRefreshIntervalMs, 1, 1000, 77, cw->T("Refresh interval"), 1, screenManager()))->SetFormat(di->T("%d ms"));
+
+	ChoiceGroup *scannerGroup = groups->Add(new ChoiceGroup(cw->T("Memory Scanner")));
+	CheckBox *scannerCheck = scannerGroup->Add(new CheckBox(&g_Config.bEnableMemoryScanner, cw->T("Memory Scanner"), cw->T("Adds a button at the top of the game screen to search game memory for values")));
+	// Only works with cheats on, like the cheats themselves.
+	scannerCheck->SetEnabledFunc([]() { return g_Config.bEnableCheats; });
 }
 
 void CwCheatScreen::CreateContentViews(UI::ViewGroup *parent) {

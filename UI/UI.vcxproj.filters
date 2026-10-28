@@ -37,6 +37,9 @@
     <ClCompile Include="CwCheatScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="MemoryScannerScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
     <ClCompile Include="TouchControlLayoutScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
@@ -234,6 +237,9 @@
       <Filter>Screens</Filter>
     </ClInclude>
     <ClInclude Include="CwCheatScreen.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="MemoryScannerScreen.h">
       <Filter>Screens</Filter>
     </ClInclude>
     <ClInclude Include="TouchControlLayoutScreen.h">
