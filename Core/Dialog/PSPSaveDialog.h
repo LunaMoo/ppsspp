@@ -52,6 +52,22 @@ private:
 	void DisplayMessage(std::string_view text, bool hasYesNo = false);
 	std::string GetSelectedSaveDirName() const;
 
+	// The firmware's look (see FirmwareDialogStyle.h), from savedata_utility.rco.
+	void DisplayBannerFirmware(int which);
+	void DisplaySaveListFirmware(bool drawSelected = true);
+	void DisplaySaveIconFirmware();
+	void DrawGlowFirmware(float alpha);
+	void DrawShadowFirmware(float alpha);
+	void DisplaySaveDataInfo1Firmware();
+	void DisplaySaveDataInfo2Firmware(bool showNewData);
+	void DrawSaveIconFirmware(const SaveFileInfo &info, float x, float y, float w, float h, u32 color);
+	void MoveSelection();
+	// A string of the firmware's savedata dialog in the dialog's language, when drawing in its
+	// style; otherwise (or if missing) fallback.
+	std::string SaveText(const char *label, std::string_view fallback);
+	// The title the game gave its new save, if any.
+	std::string NewDataTitle();
+
 	void StartIOThread();
 	bool FinishIO(bool wait);
 	void ExecuteIOAction();
@@ -98,6 +114,51 @@ private:
 	SceUtilitySavedataParam originalRequest{};
 	u32 requestAddr = 0;
 	int currentSelectedSave = 0;
+	// Drawing in the firmware's style this frame.
+	bool firmwareStyle_ = false;
+
+	// The firmware's screens change by fading their parts out and in, each at its own pace. What
+	// each frame draws is noted, to tell what has come and gone.
+	enum FwPart {
+		FWP_LIST,  // The other icons and the selected one's details.
+		FWP_ICON,  // The selected icon.
+		FWP_GLOW,
+		FWP_SHADOW,
+		FWP_INFO2,
+		FWP_MESSAGE,
+		FWP_BUTTONS,
+		FWP_BUSY,
+		FWP_COUNT,
+	};
+	struct FwScreen {
+		bool has[FWP_COUNT]{};
+		bool newData = false;
+		std::string message;
+		bool yesNo = false;
+		bool besideIcon = false;
+		int buttons = 0;
+	};
+	void FwReset();
+	// Notes that this frame draws part (its parameters in fwScreen_ set first), and returns how far
+	// it has faded in.
+	float FwShow(FwPart part);
+	// How opaque a part that has gone still is (0 once it's faded out).
+	float FwOutAlpha(FwPart part) const;
+	float FwSeconds(int since) const;
+	bool FwSame(FwPart part, const FwScreen &a, const FwScreen &b) const;
+	// Draws what's fading out, and moves on to the next frame.
+	void FwEndFrame();
+
+	FwScreen fwScreen_;
+	FwScreen fwLastScreen_;
+	FwScreen fwOutScreen_[FWP_COUNT];
+	int fwInStart_[FWP_COUNT]{};
+	int fwOutStart_[FWP_COUNT]{};
+	int fwClock_ = 0;
+	bool fwFirstFrame_ = true;
+	bool fwDrawingOut_ = false;
+	// Whether the save's icon was drawn this frame (the message box sits beside it).
+	bool iconShown_ = false;
 
 	enum SaveIOStatus {
 		SAVEIO_NONE,

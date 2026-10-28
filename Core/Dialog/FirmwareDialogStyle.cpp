@@ -151,6 +151,8 @@ bool rcoTried = false;
 RCOFile msgdialogRCO;
 bool systemRcoTried = false;
 RCOFile systemRCO;
+bool savedataRcoTried = false;
+RCOFile savedataRCO;
 
 void LoadRCO(const char *name, bool *tried, RCOFile *rco) {
 	if (*tried) {
@@ -177,6 +179,10 @@ bool UseFirmwareMsgDialogStyle() {
 	return g_Config.iMsgDialogStyle == (int)DialogStyle::FIRMWARE && FirmwareDialogStyleAvailable();
 }
 
+bool UseFirmwareSaveDialogStyle() {
+	return g_Config.iSaveDialogStyle == (int)DialogStyle::FIRMWARE && FirmwareDialogStyleAvailable();
+}
+
 std::string FirmwareErrorMessage(uint32_t errorCode, int language) {
 	const char *label = ErrorLabelFor(errorCode);
 	if (!label) {
@@ -201,10 +207,21 @@ std::string FirmwareSystemText(const char *label, int language) {
 	return systemRCO.Text(language, label);
 }
 
+std::string FirmwareSavedataText(const char *label, int language) {
+	std::lock_guard<std::mutex> guard(lock);
+	LoadRCO("savedata_utility.rco", &savedataRcoTried, &savedataRCO);
+	if (!savedataRCO.IsLoaded()) {
+		return std::string();
+	}
+	return savedataRCO.Text(language, label);
+}
+
 void FirmwareDialogStyleReset() {
 	std::lock_guard<std::mutex> guard(lock);
 	rcoTried = false;
 	msgdialogRCO = RCOFile();
 	systemRcoTried = false;
 	systemRCO = RCOFile();
+	savedataRcoTried = false;
+	savedataRCO = RCOFile();
 }

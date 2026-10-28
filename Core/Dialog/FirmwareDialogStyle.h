@@ -26,9 +26,10 @@
 
 // Whether the firmware has what the firmware style needs (its fonts).
 bool FirmwareDialogStyleAvailable();
-// Whether to draw the message dialog in the firmware's style: chosen in the settings and
-// available.
+// Whether to draw the message / savedata dialogs in the firmware's style: chosen in the settings
+// and available.
 bool UseFirmwareMsgDialogStyle();
+bool UseFirmwareSaveDialogStyle();
 
 // The message the firmware's msgdialog shows for an error code, from msgdialog_plugin.rco, in the
 // dialog's language (PSP_SYSTEMPARAM_LANGUAGE_*). Empty if the code isn't one it knows.
@@ -38,6 +39,10 @@ std::string FirmwareErrorMessage(uint32_t errorCode, int language);
 // msgsystem_enter, msgsystem_back, msgsystem_ok...) in a PSP_SYSTEMPARAM_LANGUAGE_* language.
 // Empty if missing.
 std::string FirmwareSystemText(const char *label, int language);
+
+// A string of the firmware's savedata dialog (savedata_utility.rco: msgsavedata_cmn_save_ask,
+// msgshare_wait...) in a PSP_SYSTEMPARAM_LANGUAGE_* language. Empty if missing.
+std::string FirmwareSavedataText(const char *label, int language);
 
 // Drops what was loaded, for when the firmware changes.
 void FirmwareDialogStyleReset();

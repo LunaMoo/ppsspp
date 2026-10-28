@@ -373,6 +373,8 @@ static constexpr ConfigSetting generalSettings[] = {
 		.Label(I18NCat::SYSTEM, "HOME button screen").Choices(homeScreenStyleNames),
 	ConfigSetting("MsgDialogStyle", SETTING(g_Config, iMsgDialogStyle), (int)DialogStyle::FIRMWARE, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "Message dialogs").Choices(dialogStyleNames),
+	ConfigSetting("SaveDialogStyle", SETTING(g_Config, iSaveDialogStyle), (int)DialogStyle::FIRMWARE, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Save/Load dialogs").Choices(dialogStyleNames),
 	ConfigSetting("VolumeBarStyle", SETTING(g_Config, iVolumeBarStyle), (int)VolumeBarStyle::NO_BACKGROUND, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "In-game volume bar").Choices(volumeBarStyleNames),
 	ConfigSetting("GameBootAnimation", SETTING(g_Config, bGameBootAnimation), false, CfgFlag::DEFAULT)

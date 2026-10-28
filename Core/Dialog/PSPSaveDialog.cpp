@@ -27,6 +27,7 @@
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/StringUtils.h"
 #include "Common/Thread/ThreadUtil.h"
+#include "Core/Dialog/FirmwareDialogStyle.h"
 #include "Core/Dialog/PSPSaveDialog.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/Util/PathUtil.h"
@@ -162,6 +163,7 @@ int PSPSaveDialog::Init(int paramAddr) {
 	INFO_LOG(Log::sceUtility,"sceUtilitySavedataInitStart(%08x) : Game key (hex): %s", paramAddr, param.GetKey(param.GetPspParam()).c_str());
 
 	yesnoChoice = 1;
+	FwReset();
 	switch ((SceUtilitySavedataFocus)(u32)param.GetPspParam()->focus) {
 	case SCE_UTILITY_SAVEDATA_FOCUS_NAME:
 		currentSelectedSave = param.GetSaveNameIndex(param.GetPspParam());
@@ -379,6 +381,10 @@ std::string PSPSaveDialog::GetSelectedSaveDirName() const
 
 void PSPSaveDialog::DisplayBanner(int which)
 {
+	if (firmwareStyle_) {
+		DisplayBannerFirmware(which);
+		return;
+	}
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	PPGeDrawRect(0, 0, 480, 23, CalcFadedColor(0x65636358));
 
@@ -407,8 +413,13 @@ void PSPSaveDialog::DisplayBanner(int which)
 
 void PSPSaveDialog::DisplaySaveList(bool canMove) {
 	std::lock_guard<std::mutex> guard(paramLock);
-	static int upFramesHeld = 0;
-	static int downFramesHeld = 0;
+	if (firmwareStyle_) {
+		DisplaySaveListFirmware();
+		if (canMove) {
+			MoveSelection();
+		}
+		return;
+	}
 
 	for (int displayCount = 0; displayCount < param.GetFilenameCount(); displayCount++) {
 		PPGeImageStyle imageStyle = FadedImageStyle();
@@ -466,16 +477,16 @@ void PSPSaveDialog::DisplaySaveList(bool canMove) {
 	}
 
 	if (canMove) {
-		if ( (IsButtonPressed(CTRL_UP) || IsButtonHeld(CTRL_UP, upFramesHeld)) && currentSelectedSave > 0)
-			currentSelectedSave--;
-
-		else if ( (IsButtonPressed(CTRL_DOWN) || IsButtonHeld(CTRL_DOWN, downFramesHeld)) && currentSelectedSave < (param.GetFilenameCount() - 1))
-			currentSelectedSave++;
+		MoveSelection();
 	}
 }
 
 void PSPSaveDialog::DisplaySaveIcon(bool checkExists) {
 	std::lock_guard<std::mutex> guard(paramLock);
+	if (firmwareStyle_) {
+		DisplaySaveIconFirmware();
+		return;
+	}
 	PPGeImageStyle imageStyle = FadedImageStyle();
 	auto curSave = param.GetFileInfo(currentSelectedSave);
 
@@ -546,8 +557,439 @@ static void FormatSaveDate(char *date, size_t sz, const tm &t) {
 	}
 }
 
+// The firmware's look, from screenshots of a PSP-2000 on 6.61 (Brandish: The Dark Revenant's save
+// and load dialogs). The game behind is darkened to 30%. The list of icons keeps PPSSPP's
+// geometry, the selected icon 144x80 at (26, 96) with tex_f (savedata_utility.rco) pulsing around
+// it as a glow. The texts beside it are placed by savedata_utility.rco's page_listdata objects
+// (paf's coordinates: origin at the screen's centre, y up; a text's position is where its
+// baseline starts), the rest by measuring.
+namespace {
+const float FW_FONT_SIZE = 10.125f;
+const float FW_ICON_X = 26.0f;
+const float FW_ICON_Y = 96.0f;
+const float FW_ICON_W = 144.0f;
+const float FW_ICON_H = 80.0f;
+// The message box beside the icon: lines from x 201 to 464.
+const float FW_MESSAGE_CENTER_X = 333.0f;
+const float FW_MESSAGE_WIDTH = 264.0f;
+const float FW_MESSAGE_WRAP = 230.0f;
+}
+
+std::string PSPSaveDialog::SaveText(const char *label, std::string_view fallback) {
+	if (!firmwareStyle_) {
+		return std::string(fallback);
+	}
+	const pspUtilityDialogCommon *common = GetCommonParam();
+	std::string text = FirmwareSavedataText(label, common ? (int)common->language : 1);
+	return text.empty() ? std::string(fallback) : text;
+}
+
+std::string PSPSaveDialog::NewDataTitle() {
+	// newData points to the new save's icon (a PspUtilitySavedataFileData) followed by a pointer to
+	// its title.
+	const auto &newData = param.GetPspParam()->newData;
+	if (!newData.IsValid() || !Memory::IsValidRange(newData.ptr, sizeof(PspUtilitySavedataFileData) + 4)) {
+		return std::string();
+	}
+	const u32 titleAddr = Memory::ReadUnchecked_U32(newData.ptr + sizeof(PspUtilitySavedataFileData));
+	if (titleAddr == 0 || !Memory::IsValidNullTerminatedString(titleAddr)) {
+		return std::string();
+	}
+	return SanitizeUTF8(Memory::GetCharPointerUnchecked(titleAddr));
+}
+
+void PSPSaveDialog::DisplayBannerFirmware(int which) {
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	// tex_infobar (system_plugin_fg.rco) across the top, a white gradient tinted grey-blue.
+	PPGeImage *bar = PPGeFirmwareImage("system_plugin_fg.rco", "tex_infobar");
+	PPGeImageStyle barStyle;
+	barStyle.color = CalcFadedColor(0xFF4D4B40);
+	if (bar) {
+		PPGeDrawFirmwareImage(bar, 0.0f, 0.0f, 480.0f, 21.0f, barStyle);
+	} else {
+		PPGeDrawRect(0, 0, 480, 21, CalcFadedColor(0x664D4B40));
+	}
+
+	std::string title;
+	switch (which) {
+	case DB_SAVE:
+		title = SaveText("msgsavedata_cmn_save", di->T("Save"));
+		break;
+	case DB_LOAD:
+		title = SaveText("msgsavedata_cmn_load", di->T("Load"));
+		break;
+	case DB_DELETE:
+		title = SaveText("msgshare_opt_del", di->T("Delete"));
+		break;
+	default:
+		break;
+	}
+	// The hexagon, its shape 4 right of the image's left and 7 down.
+	if (PPGeImage *icon = PPGeFirmwareImage("savedata_utility.rco", "tex_infobar_icon")) {
+		PPGeDrawFirmwareImage(icon, 4.0f, -2.0f, 0, 0, FadedImageStyle());
+	}
+	const float scale = 8.2f / FW_FONT_SIZE;
+	PPGeSetFirmwareFont(true);
+	PPGeDrawText(title, 30.0f, 16.0f - PPGeFirmwareFontAscent() * scale, FirmwareTextStyle(PPGeAlign::BOX_LEFT, scale));
+}
+
+void PSPSaveDialog::DrawSaveIconFirmware(const SaveFileInfo &info, float x, float y, float w, float h, u32 color) {
+	PPGeImageStyle imageStyle;
+	imageStyle.color = color;
+	if (info.texture != nullptr && info.texture->IsValid()) {
+		info.texture->SetTexture();
+		const int tw = info.texture->Width();
+		const int th = info.texture->Height();
+		const float scaledW = floorf(tw * (h / (float)th));
+		x += floorf((w - scaledW) / 2.0f);
+		// Over black, as in DisplaySaveList.
+		PPGeDrawRect(x, y, x + scaledW, y + h, CalcFadedColor(0xFF000000));
+		PPGeDrawImage(x, y, scaledW, h, 0, 0, 1, 1, tw, th, imageStyle);
+		PPGeSetDefaultTexture();
+		return;
+	}
+	// The firmware's own pictures: 146x82, an icon's size and a pixel of border around it.
+	const char *label = info.broken ? "tex_broken_data" : (info.size == 0 ? "tex_new" : "tex_default_icon");
+	if (PPGeImage *image = PPGeFirmwareImage("savedata_utility.rco", label)) {
+		const float bx = w / 144.0f, by = h / 80.0f;
+		PPGeDrawFirmwareImage(image, x - bx, y - by, w + 2.0f * bx, h + 2.0f * by, imageStyle);
+	} else {
+		PPGeDrawRect(x, y, x + w, y + h, CalcFadedColor(0x88666666));
+	}
+}
+
+// How the parts fade, in seconds, from a video of a PSP saving (at 30 frames a second, so to about
+// a frame of it). Going from the list to a question, the list fades out, then the icon's details
+// and shadow fade in, then the box's lines (moving apart to their places), then its text. From the
+// busy icon to a message, the message comes almost at once.
+namespace {
+struct FwTiming {
+	float delay;
+	float duration;
+	float out;
+};
+const FwTiming FW_TIMINGS[] = {
+	{ 0.2f, 0.2f, 0.2f },  // FWP_LIST
+	{ 0.13f, 0.17f, 0.2f },  // FWP_ICON
+	{ 0.2f, 0.2f, 0.2f },  // FWP_GLOW
+	{ 0.13f, 0.17f, 0.2f },  // FWP_SHADOW
+	{ 0.13f, 0.17f, 0.2f },  // FWP_INFO2
+	{ 0.0f, 0.2f, 0.23f },  // FWP_MESSAGE (its own delays, below)
+	{ 0.03f, 0.07f, 0.13f },  // FWP_BUTTONS
+	{ 0.03f, 0.13f, 0.15f },  // FWP_BUSY
+};
+const float FW_MESSAGE_DELAY_AFTER_LIST = 0.27f;
+const float FW_MESSAGE_DELAY = 0.07f;
+const float FW_MESSAGE_LINES = 0.13f;
+// How far the box's lines start inside their places.
+const float FW_MESSAGE_LINE_INSET = 8.0f;
+const int FW_LONG_AGO = -100000;
+}
+
+void PSPSaveDialog::FwReset() {
+	fwScreen_ = FwScreen();
+	fwLastScreen_ = FwScreen();
+	for (int i = 0; i < FWP_COUNT; i++) {
+		fwOutScreen_[i] = FwScreen();
+		fwInStart_[i] = FW_LONG_AGO;
+		fwOutStart_[i] = FW_LONG_AGO;
+	}
+	fwFirstFrame_ = true;
+}
+
+float PSPSaveDialog::FwSeconds(int since) const {
+	return (fwClock_ - since) / 60.0f;
+}
+
+bool PSPSaveDialog::FwSame(FwPart part, const FwScreen &a, const FwScreen &b) const {
+	switch (part) {
+	case FWP_MESSAGE:
+		return a.message == b.message && a.yesNo == b.yesNo && a.besideIcon == b.besideIcon;
+	case FWP_BUTTONS:
+		return a.buttons == b.buttons;
+	default:
+		return true;
+	}
+}
+
+float PSPSaveDialog::FwShow(FwPart part) {
+	if (fwDrawingOut_) {
+		return 1.0f;
+	}
+	fwScreen_.has[part] = true;
+	if (fwFirstFrame_) {
+		// What the dialog opens with is there from the start (the dialog fades in as a whole).
+		fwInStart_[part] = FW_LONG_AGO;
+	} else if (!fwLastScreen_.has[part] || !FwSame(part, fwScreen_, fwLastScreen_)) {
+		fwInStart_[part] = fwClock_;
+	}
+	const FwTiming &timing = FW_TIMINGS[part];
+	return std::clamp((FwSeconds(fwInStart_[part]) - timing.delay) / timing.duration, 0.0f, 1.0f);
+}
+
+float PSPSaveDialog::FwOutAlpha(FwPart part) const {
+	const bool shown = fwScreen_.has[part];
+	if (fwLastScreen_.has[part] && !(shown && FwSame(part, fwScreen_, fwLastScreen_))) {
+		// Going this frame.
+		return 1.0f;
+	}
+	if (shown && FwSame(part, fwScreen_, fwOutScreen_[part])) {
+		// Back again.
+		return 0.0f;
+	}
+	return std::max(0.0f, 1.0f - FwSeconds(fwOutStart_[part]) / FW_TIMINGS[part].out);
+}
+
+void PSPSaveDialog::FwEndFrame() {
+	if (!firmwareStyle_) {
+		return;
+	}
+	for (int i = 0; i < FWP_COUNT; i++) {
+		const FwPart part = (FwPart)i;
+		if (fwLastScreen_.has[part] && (!fwScreen_.has[part] || !FwSame(part, fwScreen_, fwLastScreen_))) {
+			fwOutScreen_[part] = fwLastScreen_;
+			fwOutStart_[part] = fwClock_;
+		}
+	}
+
+	fwDrawingOut_ = true;
+	float alpha = FwOutAlpha(FWP_LIST);
+	if (alpha > 0.0f) {
+		std::lock_guard<std::mutex> guard(paramLock);
+		AlphaScope fade(this, alpha);
+		// The selected icon stays if the next screen has it too, and the glow goes under it.
+		DisplaySaveListFirmware(!fwScreen_.has[FWP_ICON]);
+		DisplaySaveDataInfo1Firmware();
+	}
+	alpha = FwOutAlpha(FWP_ICON);
+	if (alpha > 0.0f && !fwScreen_.has[FWP_ICON]) {
+		std::lock_guard<std::mutex> guard(paramLock);
+		AlphaScope fade(this, alpha);
+		if (fwOutScreen_[FWP_ICON].has[FWP_SHADOW]) {
+			DrawShadowFirmware(1.0f);
+		}
+		DrawSaveIconFirmware(param.GetFileInfo(currentSelectedSave), FW_ICON_X, FW_ICON_Y, FW_ICON_W, FW_ICON_H, CalcFadedColor(0xFFFFFFFF));
+	}
+	alpha = FwOutAlpha(FWP_INFO2);
+	if (alpha > 0.0f) {
+		std::lock_guard<std::mutex> guard(paramLock);
+		AlphaScope fade(this, alpha);
+		DisplaySaveDataInfo2Firmware(fwOutScreen_[FWP_INFO2].newData);
+	}
+	alpha = FwOutAlpha(FWP_MESSAGE);
+	if (alpha > 0.0f) {
+		const FwScreen &out = fwOutScreen_[FWP_MESSAGE];
+		AlphaScope fade(this, alpha);
+		if (out.besideIcon) {
+			DisplayMessageBoxFirmware(out.message, FW_MESSAGE_CENTER_X, FW_MESSAGE_WIDTH, FW_MESSAGE_WRAP, out.yesNo, false, false, false);
+		} else {
+			DisplayMessageBoxFirmware(out.message, 240.0f, 360.0f, 330.0f, out.yesNo, false, false, false);
+		}
+	}
+	alpha = FwOutAlpha(FWP_BUTTONS);
+	if (alpha > 0.0f) {
+		AlphaScope fade(this, alpha);
+		DisplayButtonsFirmware(fwOutScreen_[FWP_BUTTONS].buttons);
+	}
+	alpha = FwOutAlpha(FWP_BUSY);
+	if (alpha > 0.0f) {
+		AlphaScope fade(this, alpha);
+		DisplayBusyFirmware();
+	}
+	fwDrawingOut_ = false;
+
+	fwLastScreen_ = fwScreen_;
+	fwScreen_ = FwScreen();
+	fwFirstFrame_ = false;
+}
+
+void PSPSaveDialog::DrawGlowFirmware(float alpha) {
+	// tex_f is a soft white square, 69x70: its middle stretched, its halfway point on the icon's
+	// edge, reaching about 12 pixels out at the pulse's brightest.
+	if (alpha <= 0.0f) {
+		return;
+	}
+	if (PPGeImage *glow = PPGeFirmwareImage("savedata_utility.rco", "tex_f")) {
+		PPGeImageStyle glowStyle;
+		glowStyle.color = CalcFadedColor(((u32)(FirmwarePulse() * alpha * 255.0f) << 24) | 0xFFFFFF);
+		const float out = 19.0f;
+		PPGeDrawFirmwareImageFrame(glow, FW_ICON_X - out, FW_ICON_Y - out, FW_ICON_W + 2.0f * out, FW_ICON_H + 2.0f * out, 34.0f, 34.0f, glowStyle);
+	}
+}
+
+void PSPSaveDialog::DrawShadowFirmware(float alpha) {
+	// A drop shadow, below and right of the icon: tex_s (a black square with soft edges, 45x45),
+	// twice, as once is lighter than on a PSP.
+	if (alpha <= 0.0f) {
+		return;
+	}
+	if (PPGeImage *shadow = PPGeFirmwareImage("savedata_utility.rco", "tex_s")) {
+		AlphaScope fade(this, alpha);
+		const float out = 13.0f;
+		for (int i = 0; i < 2; i++) {
+			PPGeDrawFirmwareImageFrame(shadow, FW_ICON_X - out + 2.0f, FW_ICON_Y - out + 5.0f, FW_ICON_W + 2.0f * out, FW_ICON_H + 2.0f * out, 15.0f, 15.0f, FadedImageStyle());
+		}
+	}
+}
+
+void PSPSaveDialog::DisplaySaveListFirmware(bool drawSelected) {
+	const float listAlpha = FwShow(FWP_LIST);
+	float glowAlpha = 1.0f, iconAlpha = 1.0f;
+	if (drawSelected && param.GetFilenameCount() > 0) {
+		glowAlpha = FwShow(FWP_GLOW);
+		iconAlpha = FwShow(FWP_ICON);
+	}
+	if (drawSelected && !fwDrawingOut_) {
+		// A question's shadow, fading out under the icon.
+		DrawShadowFirmware(FwOutAlpha(FWP_SHADOW));
+	}
+
+	for (int displayCount = 0; displayCount < param.GetFilenameCount(); displayCount++) {
+		const SaveFileInfo &fileInfo = param.GetFileInfo(displayCount);
+		const bool selected = displayCount == currentSelectedSave;
+		if (selected && !drawSelected) {
+			continue;
+		}
+
+		float x = 58.5f, y = 97.0f, w = 81.0f, h = 45.0f;
+		if (selected) {
+			x = FW_ICON_X;
+			y = FW_ICON_Y;
+			w = FW_ICON_W;
+			h = FW_ICON_H;
+		} else if (displayCount < currentSelectedSave) {
+			y -= 13 + 45 * (currentSelectedSave - displayCount);
+		} else {
+			y += 48 + 45 * (displayCount - currentSelectedSave);
+		}
+		if (y > 472.0f || y < -200.0f) {
+			continue;
+		}
+
+		if (selected) {
+			DrawGlowFirmware(glowAlpha);
+		}
+		AlphaScope fade(this, selected ? iconAlpha : listAlpha);
+		DrawSaveIconFirmware(fileInfo, x, y, w, h, CalcFadedColor(0xFFFFFFFF));
+	}
+}
+
+void PSPSaveDialog::DisplaySaveIconFirmware() {
+	iconShown_ = true;
+	const float iconAlpha = FwShow(FWP_ICON);
+	const float shadowAlpha = FwShow(FWP_SHADOW);
+	// The list's glow, fading out under the icon.
+	DrawGlowFirmware(FwOutAlpha(FWP_GLOW));
+	DrawShadowFirmware(shadowAlpha);
+	AlphaScope fade(this, iconAlpha);
+	DrawSaveIconFirmware(param.GetFileInfo(currentSelectedSave), FW_ICON_X, FW_ICON_Y, FW_ICON_W, FW_ICON_H, CalcFadedColor(0xFFFFFFFF));
+}
+
+void PSPSaveDialog::DisplaySaveDataInfo1Firmware() {
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	AlphaScope fade(this, FwShow(FWP_LIST));
+	const SaveFileInfo &saveInfo = param.GetFileInfo(currentSelectedSave);
+	PPGeSetFirmwareFont(true);
+	const float ascent = PPGeFirmwareFontAscent();
+	auto drawText = [&](std::string_view text, float x, float baseline, float size, u32 color) {
+		const float scale = size / FW_FONT_SIZE;
+		PPGeStyle style = FirmwareTextStyle(PPGeAlign::BOX_LEFT, scale);
+		style.color = CalcFadedColor(color);
+		PPGeDrawText(text, x, baseline - ascent * scale, style);
+	};
+
+	if (saveInfo.broken) {
+		drawText(SaveText("msgshare_corrupted_data", di->T("Corrupted Data")), 180.0f, 140.0f, 8.2f, 0xFFFFFFFF);
+		drawText(saveInfo.saveTitle, 175.0f, 176.0f, 7.61f, 0xFFFFFFFF);
+		return;
+	}
+	if (saveInfo.size == 0) {
+		std::string title = NewDataTitle();
+		if (title.empty()) {
+			title = SaveText("msgsavedata_cmn_new", di->T("NEW DATA"));
+		}
+		drawText(title, 180.0f, 140.0f, 8.2f, 0xFFFFFFFF);
+		return;
+	}
+
+	char hour_time[32];
+	FormatSaveHourMin(hour_time, sizeof(hour_time), saveInfo.modif_time);
+	char date_year[32];
+	FormatSaveDate(date_year, sizeof(date_year), saveInfo.modif_time);
+	const s64 sizeK = saveInfo.size / 1024;
+
+	// The game's title in grey over tex_line, then the date and size.
+	drawText(saveInfo.title, 180.0f, 131.0f, 8.2f, 0xFFCAC6C2);
+	if (PPGeImage *line = PPGeFirmwareImage("savedata_utility.rco", "tex_line")) {
+		PPGeDrawFirmwareImage(line, 179.0f, 134.0f, 0, 0, FadedImageStyle());
+	}
+	drawText(StringFromFormat("%s  %s  %lld KB", date_year, hour_time, sizeK), 180.0f, 151.0f, 6.43f, 0xFFFFFFFF);
+	// savedata_title_text at (-65, -40) and detail_text at (-65, -62), 300x56 with lines 14 apart.
+	drawText(saveInfo.saveTitle, 175.0f, 176.0f, 7.61f, 0xFFFFFFFF);
+
+	const float detailScale = 6.43f / FW_FONT_SIZE;
+	const float lineHeight = PPGeFirmwareFontLineHeight() * detailScale;
+	PPGeSetFirmwareFont(true, lineHeight > 0.0f ? 14.0f / lineHeight : 1.0f);
+	PPGeStyle detailStyle = FirmwareTextStyle(PPGeAlign::BOX_LEFT, detailScale);
+	PPGeDrawTextWrapped(saveInfo.saveDetail, 175.0f, 198.0f - ascent * detailScale, 300.0f, 56.0f + 4.0f, detailStyle);
+	PPGeSetFirmwareFont(true);
+}
+
+void PSPSaveDialog::DisplaySaveDataInfo2Firmware(bool showNewData) {
+	if (!fwDrawingOut_) {
+		fwScreen_.newData = showNewData;
+	}
+	AlphaScope fade(this, FwShow(FWP_INFO2));
+	tm modif_time;
+	std::string title;
+	u32 data_size;
+	if (showNewData || param.GetFileInfo(currentSelectedSave).size == 0) {
+		time_t t;
+		time(&t);
+		localtime_r(&t, &modif_time);
+		const char *save_title = param.GetPspParam()->sfoParam.savedataTitle;
+		title = SanitizeUTF8(std::string(save_title, strnlen(save_title, 128)));
+		data_size = param.GetPspParam()->dataSize;
+	} else {
+		const SaveFileInfo &info = param.GetFileInfo(currentSelectedSave);
+		modif_time = info.modif_time;
+		title = info.saveTitle;
+		data_size = (u32)info.size;
+	}
+
+	char hour_time[32];
+	FormatSaveHourMin(hour_time, sizeof(hour_time), modif_time);
+	char date_year[32];
+	FormatSaveDate(date_year, sizeof(date_year), modif_time);
+
+	// mini_title_name, mini_makedate and mini_size: from (-235, -77), 17 apart, at size 7.02.
+	PPGeSetFirmwareFont(true);
+	const float scale = 7.02f / FW_FONT_SIZE;
+	const float top = -PPGeFirmwareFontAscent() * scale;
+	const PPGeStyle style = FirmwareTextStyle(PPGeAlign::BOX_LEFT, scale);
+	PPGeDrawText(title, 5.0f, 213.0f + top, style);
+	PPGeDrawText(StringFromFormat("%s  %s", date_year, hour_time), 5.0f, 230.0f + top, style);
+	PPGeDrawText(StringFromFormat("%lld KB", (s64)data_size / 1024), 5.0f, 247.0f + top, style);
+}
+
+void PSPSaveDialog::MoveSelection() {
+	static int upFramesHeld = 0;
+	static int downFramesHeld = 0;
+	if ((IsButtonPressed(CTRL_UP) || IsButtonHeld(CTRL_UP, upFramesHeld)) && currentSelectedSave > 0) {
+		currentSelectedSave--;
+		pulseFrames_ = 0;
+	} else if ((IsButtonPressed(CTRL_DOWN) || IsButtonHeld(CTRL_DOWN, downFramesHeld)) && currentSelectedSave < (param.GetFilenameCount() - 1)) {
+		currentSelectedSave++;
+		pulseFrames_ = 0;
+	}
+}
+
 void PSPSaveDialog::DisplaySaveDataInfo1() {
 	std::lock_guard<std::mutex> guard(paramLock);
+	if (firmwareStyle_) {
+		DisplaySaveDataInfo1Firmware();
+		return;
+	}
 	const SaveFileInfo &saveInfo = param.GetFileInfo(currentSelectedSave);
 	PPGeStyle saveTitleStyle = FadedStyle(PPGeAlign::BOX_LEFT, 0.55f);
 
@@ -588,6 +1030,10 @@ void PSPSaveDialog::DisplaySaveDataInfo1() {
 
 void PSPSaveDialog::DisplaySaveDataInfo2(bool showNewData) {
 	std::lock_guard<std::mutex> guard(paramLock);
+	if (firmwareStyle_) {
+		DisplaySaveDataInfo2Firmware(showNewData);
+		return;
+	}
 
 	tm modif_time;
 	const char *save_title;
@@ -622,6 +1068,26 @@ void PSPSaveDialog::DisplaySaveDataInfo2(bool showNewData) {
 
 void PSPSaveDialog::DisplayMessage(std::string_view text, bool hasYesNo)
 {
+	if (firmwareStyle_) {
+		fwScreen_.message = std::string(text);
+		fwScreen_.yesNo = hasYesNo;
+		fwScreen_.besideIcon = iconShown_;
+		FwShow(FWP_MESSAGE);
+		// The lines come first, after anything the list was doing.
+		const float delay = fwOutStart_[FWP_LIST] == fwInStart_[FWP_MESSAGE] || fwLastScreen_.has[FWP_LIST] ? FW_MESSAGE_DELAY_AFTER_LIST : FW_MESSAGE_DELAY;
+		const float t = FwSeconds(fwInStart_[FWP_MESSAGE]) - delay;
+		FirmwareBoxAnim anim;
+		anim.lineAlpha = std::clamp(t / FW_MESSAGE_LINES, 0.0f, 1.0f);
+		anim.lineInset = roundf((1.0f - anim.lineAlpha) * FW_MESSAGE_LINE_INSET);
+		anim.contentAlpha = std::clamp((t - FW_MESSAGE_LINES) / FW_TIMINGS[FWP_MESSAGE].duration, 0.0f, 1.0f);
+		// Beside the icon, or in the middle without one.
+		if (iconShown_) {
+			DisplayMessageBoxFirmware(text, FW_MESSAGE_CENTER_X, FW_MESSAGE_WIDTH, FW_MESSAGE_WRAP, hasYesNo, false, false, true, anim);
+		} else {
+			DisplayMessageBoxFirmware(text, 240.0f, 360.0f, 330.0f, hasYesNo, false, false, true, anim);
+		}
+		return;
+	}
 	PPGeStyle textStyle = FadedStyle(PPGeAlign::BOX_CENTER, FONT_SCALE);
 
 	const float WRAP_WIDTH = 254.0f;
@@ -698,15 +1164,43 @@ int PSPSaveDialog::Update(int animSpeed) {
 
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 
+	firmwareStyle_ = UseFirmwareSaveDialogStyle() && PPGeHasFirmwareFont();
+	iconShown_ = false;
+	fwClock_ += std::max(animSpeed, 1);
+	auto startDraw = [&]() {
+		StartDraw(!firmwareStyle_);
+		if (firmwareStyle_) {
+			// The game shows through at about 30%.
+			PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0xB3000000));
+		}
+	};
+	auto displayButtons = [&](int flags) {
+		if (firmwareStyle_) {
+			fwScreen_.buttons = flags;
+			AlphaScope fade(this, FwShow(FWP_BUTTONS));
+			DisplayButtonsFirmware(flags);
+		} else {
+			DisplayButtons(flags);
+		}
+	};
+	auto displayBusy = [&]() {
+		AlphaScope fade(this, FwShow(FWP_BUSY));
+		DisplayBusyFirmware();
+	};
+	auto endDraw = [&]() {
+		FwEndFrame();
+		EndDraw();
+	};
+
 	switch (display)
 	{
 		case DS_SAVE_LIST_CHOICE:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveList();
 			DisplaySaveDataInfo1();
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_SAVE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -722,17 +1216,17 @@ int PSPSaveDialog::Update(int animSpeed) {
 					StartIOThread();
 				}
 			}
-			EndDraw();
+			endDraw();
 		break;
 		case DS_SAVE_CONFIRM:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(false);
 			DisplaySaveDataInfo2(true);
 
-			DisplayMessage(di->T("Confirm Save", "Do you want to save this data?"), true);
+			DisplayMessage(SaveText("msgsavedata_cmn_save_ask", di->T("Confirm Save", "Do you want to save this data?")), true);
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_SAVE);
 
 			if (IsButtonPressed(cancelButtonFlag) || (IsButtonPressed(okButtonFlag) && yesnoChoice == 0)) {
@@ -743,17 +1237,17 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartIOThread();
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_SAVE_CONFIRM_OVERWRITE:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("Confirm Overwrite","Do you want to overwrite the data?"), true);
+			DisplayMessage(SaveText("msgsavedata_cmn_overwrite_ask", di->T("Confirm Overwrite","Do you want to overwrite the data?")), true);
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_SAVE);
 
 			if (IsButtonPressed(cancelButtonFlag) || (IsButtonPressed(okButtonFlag) && yesnoChoice == 0)) {
@@ -768,32 +1262,37 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartIOThread();
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_SAVE_SAVING:
 			// The dialog keeps drawing while the IO runs, and takes the results once it's done.
 			FinishIO(false);
 
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2(true);
 
-			DisplayMessage(di->T("Saving","Saving\nPlease Wait..."));
+			// The firmware shows only its busy icon while it works.
+			if (firmwareStyle_) {
+				displayBusy();
+			} else {
+				DisplayMessage(di->T("Saving","Saving\nPlease Wait..."));
+			}
 
 			DisplayBanner(DB_SAVE);
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_SAVE_FAILED:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2(true);
 
-			DisplayMessage(di->T("SavingFailed", "Unable to save data."));
+			DisplayMessage(SaveText("msgshare_error_save", di->T("SavingFailed", "Unable to save data.")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_SAVE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -806,17 +1305,17 @@ int PSPSaveDialog::Update(int animSpeed) {
 				}
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_SAVE_DONE:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("Save completed"));
+			DisplayMessage(SaveText("msgsavedata_cmn_saved", di->T("Save completed")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_SAVE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -826,16 +1325,16 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartFade(false);
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 
 		case DS_LOAD_LIST_CHOICE:
-			StartDraw();
+			startDraw();
 			
 			DisplaySaveList();
 			DisplaySaveDataInfo1();
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_LOAD);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -846,17 +1345,17 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartIOThread();
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_LOAD_CONFIRM:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("ConfirmLoad", "Load this data?"), true);
+			DisplayMessage(SaveText("msgsavedata_cmn_load_ask", di->T("ConfirmLoad", "Load this data?")), true);
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_LOAD);
 
 			if (IsButtonPressed(cancelButtonFlag) || (IsButtonPressed(okButtonFlag) && yesnoChoice == 0)) {
@@ -867,32 +1366,37 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartIOThread();
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_LOAD_LOADING:
 			// The dialog keeps drawing while the IO runs, and takes the results once it's done.
 			FinishIO(false);
 
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("Loading","Loading\nPlease Wait..."));
+			// The firmware shows only its busy icon while it works.
+			if (firmwareStyle_) {
+				displayBusy();
+			} else {
+				DisplayMessage(di->T("Loading","Loading\nPlease Wait..."));
+			}
 
 			DisplayBanner(DB_LOAD);
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_LOAD_FAILED:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("LoadingFailed", "Load failed\nThe data is corrupted."));
+			DisplayMessage(SaveText("msgshare_sd_error_load_data_corrupted", di->T("LoadingFailed", "Load failed\nThe data is corrupted.")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_LOAD);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -904,17 +1408,17 @@ int PSPSaveDialog::Update(int animSpeed) {
 				}
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_LOAD_DONE:
-			StartDraw();
+			startDraw();
 			
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("Load completed"));
+			DisplayMessage(SaveText("msgsavedata_cmn_loaded", di->T("Load completed")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_LOAD);
 
 			// Allow OK to be pressed as well to confirm the save.
@@ -927,14 +1431,14 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartFade(false);
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_LOAD_NODATA:
-			StartDraw();
+			startDraw();
 
-			DisplayMessage(di->T("There is no data"));
+			DisplayMessage(SaveText("msgshare_error_no_data", di->T("There is no data")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_LOAD);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -942,16 +1446,16 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartFade(false);
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 
 		case DS_DELETE_LIST_CHOICE:
-			StartDraw();
+			startDraw();
 			
 			DisplaySaveList();
 			DisplaySaveDataInfo1();
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -962,19 +1466,19 @@ int PSPSaveDialog::Update(int animSpeed) {
 				display = DS_DELETE_CONFIRM;
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_DELETE_CONFIRM:
-			StartDraw();
+			startDraw();
 
 			DisplaySaveIcon(true);
 			DisplaySaveDataInfo2();
 
-			DisplayMessage(di->T("DeleteConfirm", 
-						"This save data will be deleted.\nAre you sure you want to continue?"), 
+			DisplayMessage(SaveText("msgshare_del_data_ask", di->T("DeleteConfirm", 
+						"This save data will be deleted.\nAre you sure you want to continue?")), 
 						true);
 
-			DisplayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_OK | DS_BUTTON_CANCEL);
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag) || (IsButtonPressed(okButtonFlag) && yesnoChoice == 0)) {
@@ -989,26 +1493,31 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartIOThread();
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_DELETE_DELETING:
 			// The dialog keeps drawing while the IO runs, and takes the results once it's done.
 			FinishIO(false);
 
-			StartDraw();
+			startDraw();
 
-			DisplayMessage(di->T("Deleting","Deleting\nPlease Wait..."));
+			// The firmware shows only its busy icon while it works.
+			if (firmwareStyle_) {
+				displayBusy();
+			} else {
+				DisplayMessage(di->T("Deleting","Deleting\nPlease Wait..."));
+			}
 
 			DisplayBanner(DB_DELETE);
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_DELETE_FAILED:
-			StartDraw();
+			startDraw();
 
-			DisplayMessage(di->T("DeleteFailed", "Unable to delete data."));
+			DisplayMessage(SaveText("msgshare_error_del", di->T("DeleteFailed", "Unable to delete data.")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -1018,14 +1527,14 @@ int PSPSaveDialog::Update(int animSpeed) {
 					StartFade(false);
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_DELETE_DONE:
-			StartDraw();
+			startDraw();
 			
-			DisplayMessage(di->T("Delete completed"));
+			DisplayMessage(SaveText("msgshare_deleted", di->T("Delete completed")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -1041,14 +1550,14 @@ int PSPSaveDialog::Update(int animSpeed) {
 				}
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 		case DS_DELETE_NODATA:
-			StartDraw();
+			startDraw();
 			
-			DisplayMessage(di->T("There is no data"));
+			DisplayMessage(SaveText("msgshare_error_no_data", di->T("There is no data")));
 
-			DisplayButtons(DS_BUTTON_CANCEL);
+			displayButtons(DS_BUTTON_CANCEL);
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag)) {
@@ -1056,7 +1565,7 @@ int PSPSaveDialog::Update(int animSpeed) {
 				StartFade(false);
 			}
 
-			EndDraw();
+			endDraw();
 		break;
 
 		case DS_NONE: // For action which display nothing
@@ -1400,6 +1909,10 @@ void PSPSaveDialog::DoState(PointerWrap &p) {
 		ioThread.join();
 	}
 	PSPDialog::DoState(p);
+	if (p.mode == p.MODE_READ) {
+		// The firmware style's fades aren't kept: the loaded screen shows as it is.
+		FwReset();
+	}
 
 	// Version 3 activates the s > 2 branch below, so ioThreadStatus survives
 	// a savestate. Safe to restore: the IO thread was joined above, so the

@@ -341,7 +341,7 @@ enum class RemoteISOShareType : int {
 	LOCAL_FOLDER,
 };
 
-// How the system dialogs games open are drawn.
+// How the system dialogs games open are drawn (set separately for messages and saves).
 enum class DialogStyle {
 	BUILTIN = 0,  // PPSSPP's own.
 	FIRMWARE = 1,  // With the installed firmware's fonts, strings and layout, as on a PSP.
