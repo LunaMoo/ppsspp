@@ -210,6 +210,7 @@ static void BuildPSPSettingsPage(SettingsPage *page) {
 	page->Setting(&g_Config.iHomeScreenStyle).EnabledFunc([] {
 		return ImposeHomeScreen::FirmwareArtAvailable();
 	});
+	page->Setting(&g_Config.iVolumeBarStyle);
 	page->Setting(&g_Config.bGameBootAnimation).EnabledFunc([] {
 		return GameBootAnimation::Available();
 	});

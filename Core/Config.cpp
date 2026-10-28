@@ -262,6 +262,7 @@ static constexpr const char *autoLoadSaveStateNames[] = { "Off", "Oldest Save", 
 
 static constexpr const char *uiSoundStyleNames[] = { "PPSSPP", "PSP firmware, ticks only", "PSP firmware, all sounds" };
 static constexpr const char *homeScreenStyleNames[] = { "PPSSPP", "PSP firmware" };
+static constexpr const char *volumeBarStyleNames[] = { "Home screen style", "Transparent background", "Off" };
 
 static constexpr const char *backgroundAnimationNames[] = { "No animation", "Floating symbols", "Recent games", "Waves", "Moving background", "Bouncing icon", "Colored floating symbols" };
 
@@ -369,6 +370,8 @@ static constexpr ConfigSetting generalSettings[] = {
 		.Label(I18NCat::SYSTEM, "UI sounds").Choices(uiSoundStyleNames),
 	ConfigSetting("HomeScreenStyle", SETTING(g_Config, iHomeScreenStyle), (int)HomeScreenStyle::FIRMWARE, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "HOME button screen").Choices(homeScreenStyleNames),
+	ConfigSetting("VolumeBarStyle", SETTING(g_Config, iVolumeBarStyle), (int)VolumeBarStyle::NO_BACKGROUND, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "In-game volume bar").Choices(volumeBarStyleNames),
 	ConfigSetting("GameBootAnimation", SETTING(g_Config, bGameBootAnimation), false, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "PSP intro outside the XMB"),
 

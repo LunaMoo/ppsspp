@@ -57,6 +57,13 @@ enum class HomeScreenStyle {
 	FIRMWARE = 1,
 };
 
+// The volume bar shown over a game when the volume keys are pressed.
+enum class VolumeBarStyle {
+	HOME_SCREEN = 0,  // As the HOME screen draws it (HomeScreenStyle), on its background.
+	NO_BACKGROUND = 1,  // The same, without the background.
+	OFF = 2,
+};
+
 constexpr int VOLUME_OFF = 0;
 constexpr int VOLUME_FULL = 10;
 constexpr int VOLUMEHI_FULL = 100;  // for newer volume params. will convert them all later
