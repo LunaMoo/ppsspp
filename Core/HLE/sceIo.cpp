@@ -1623,6 +1623,15 @@ static FileNode *__IoOpen(int &error, const char *filename, int flags, int mode)
 		info.exists = true;
 
 		isTTY = true;
+	} else if (startsWithNoCase(filename, "msstor")) {
+		// The memory stick's raw block device. Nothing reads through it yet: the VSH's Saved Data
+		// Utility opens it only to ask (sceIoIoctl 0x02125008/9) whether a stick is in and writable,
+		// so a node with nothing behind it does, as for tty0:.
+		info.name = filename;
+		info.access = 0777;
+		info.exists = true;
+
+		isTTY = true;
 	} else {
 		h = pspFileSystem.OpenFile(filename, (FileAccess)(access | (int)FileAccess::FILEACCESS_PPSSPP_QUIET));
 		if (h < 0) {
@@ -1695,13 +1704,23 @@ static u32 sceIoOpen(const char *filename, int flags, int mode) {
 			// These are fast to open, no delay or even rescheduling happens.
 			return hleLogDebug(Log::sceIo, id);
 		}
+		if (startsWithNoCase(filename, "msstor")) {
+			// Nor does the memory stick's raw device (pspautotests io/msstor/msstor).
+			return hleLogDebug(Log::sceIo, id);
+		}
 		return hleDelayResult(hleLogDebug(Log::sceIo, id), "file opened", __IoOpenDelayUs(filename));
 	}
 }
 
 static u32 sceIoClose(int id) {
 	u32 error;
+	// Closing the memory stick's raw device doesn't reschedule (pspautotests io/msstor/msstor).
+	FileNode *f = __IoGetFd(id, error);
+	const bool rawMemstick = f && startsWithNoCase(f->fullpath, "msstor");
 	__IoFreeFd(id, error);
+	if (rawMemstick) {
+		return hleLogDebug(Log::sceIo, error);
+	}
 	// Timing is not accurate, aiming low for now.
 	return hleDelayResult(hleLogDebug(Log::sceIo, error), "file closed", 100);
 }
@@ -1749,6 +1768,22 @@ static u32 sceIoDevctl(const char *name, int cmd, u32 argAddr, int argLen, u32 o
 		DEBUG_LOG(Log::sceIo,"sceIoDevctl(\"%s\", %08x, %08x, %i, %08x, %i)", name, cmd, argAddr, argLen, outPtr, outLen);
 	}
 
+	// The memory stick's raw device (see sceIoIoctl). 0x02125802 is the stick's type code, from
+	// msstor.prx's devctl handler (6.61, 08002988): a PSP with its stick answers 0x40 (pspautotests
+	// io/msstor/msstor), which the VSH's Saved Data Utility checks against 0x11 and 0x41.
+	// 0x02125801 copies 5 bytes of the stick's state (08002920), which we don't know; only its size
+	// check is here.
+	if (startsWithNoCase(name, "msstor") && cmd == 0x02125801 && (!Memory::IsValidRange(outPtr, 5) || outLen < 5)) {
+		return hleLogError(Log::sceIo, SCE_ERROR_MSSTOR_BAD_PARAMS, "bad output buffer");
+	}
+	if (startsWithNoCase(name, "msstor") && cmd == 0x02125802) {
+		if (!Memory::IsValidRange(outPtr, 4) || outLen < 4) {
+			return hleLogError(Log::sceIo, SCE_ERROR_MSSTOR_BAD_PARAMS, "bad output buffer");
+		}
+		Memory::WriteUnchecked_U32(0x40, outPtr);
+		return hleLogDebug(Log::sceIo, 0, "stick type 40");
+	}
+
 	// UMD checks
 	switch (cmd) {
 	case 0x01E18030:
@@ -1766,7 +1801,8 @@ static u32 sceIoDevctl(const char *name, int cmd, u32 argAddr, int argLen, u32 o
 	case 0x01F20001:
 		// Get UMD disc type
 		if (Memory::IsValid4AlignedRange(outPtr, 8) && outLen >= 8) {
-			Memory::WriteUnchecked_U32(0x10, outPtr + 4);  // Always return game disc (if present)
+			// What's on the disc, or none in an empty drive (as JPCSP answers without a disc).
+			Memory::WriteUnchecked_U32(__UmdDiscType(), outPtr + 4);
 			return hleLogDebug(Log::sceIo, 0);
 		} else {
 			return hleLogError(Log::sceIo, SCE_ERROR_MEMSTICK_DEVCTL_BAD_PARAMS);
@@ -2308,7 +2344,7 @@ static u32 sceIoSetAsyncCallback(int id, u32 clbckId, u32 clbckArg) {
 	}
 }
 
-static u32 sceIoOpenAsync(const char *filename, int flags, int mode) {
+static u32 sceIoOpenAsync(MIPSState *mips, const char *filename, int flags, int mode) {
 	hleEatCycles(18000);
 	if (!filename) {
 		// Not tested on the PSP.
@@ -2648,12 +2684,12 @@ static void strcpy_limit(char *dest, const char *src, int limit) {
 	dest[i] = 0;
 }
 
-static u32 sceIoDread(int id, u32 dirent_addr) {
+static u32 sceIoDread(MIPSState *mips, int id, u32 dirent_addr) {
 	u32 error;
 	DirListing *dir = kernelObjects.Get<DirListing>(id, error);
 	if (dir) {
 		if (!Memory::IsValidRange(dirent_addr, sizeof(SceIoDirEnt))) {
-			Core_MemoryException(dirent_addr, sizeof(SceIoDirEnt), currentMIPS->pc, MemoryExceptionType::WRITE_BLOCK, "sceIoDread");
+			Core_MemoryException(dirent_addr, sizeof(SceIoDirEnt), mips->pc, MemoryExceptionType::WRITE_BLOCK, "sceIoDread");
 			return hleLogError(Log::sceIo, SCE_KERNEL_ERROR_ILLEGAL_ADDR, "invalid address");
 		}
 		SceIoDirEnt *entry = (SceIoDirEnt*) Memory::GetPointerOrException(dirent_addr);
@@ -2755,14 +2791,17 @@ int __IoIoctl(u32 id, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 out
 		f->pgdInfo = pgd_open(kirk, pgd_header, 2, key_ptr);
 		if (!f->pgdInfo) {
 			f->npdrm = false;
+			const u32 plainOffset = f->pgd_offset;
 			f->pgd_offset = 0;  // Reset PGD offset so file can be read as regular file
-			pspFileSystem.SeekFile(f->handle, (s32)0, FILEMOVE_BEGIN);
 			if (memcmp(pgd_header, pgd_magic, 4) == 0) {
+				pspFileSystem.SeekFile(f->handle, (s32)0, FILEMOVE_BEGIN);
 				// File is PGD file, but key mismatch
 				ERROR_LOG(Log::sceIo, "%s is PGD file, but there's likely a key mismatch. Returning error.", f->fullpath.c_str());
 				return SCE_ERROR_PGD_INVALID_HEADER;
 			} else {
-				// File is not encrypted.
+				// File is not encrypted. Read from where the PGD would start (0 for an ordinary file): a
+				// converted PS1 PBP's disc image is plain, and POPS reads it right after this.
+				pspFileSystem.SeekFile(f->handle, (s32)plainOffset, FILEMOVE_BEGIN);
 				WARN_LOG(Log::sceIo, "%s is not an encrypted PGD file as was expected. Proceeding anyway.", f->fullpath.c_str());
 				return 0;
 			}
@@ -2777,7 +2816,13 @@ int __IoIoctl(u32 id, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 out
 
 	// Set PGD offset. Called from sceNpDrmEdataSetupKey
 	case 0x04100002:
-		f->pgd_offset = indataPtr;
+		// The POPS manager passes a pointer to the offset, with inlen 4. Our sceNpDrmEdataSetupKey
+		// passes the offset itself.
+		if (inlen == 4 && Memory::IsValidRange(indataPtr, 4)) {
+			f->pgd_offset = Memory::ReadUnchecked_U32(indataPtr);
+		} else {
+			f->pgd_offset = indataPtr;
+		}
 		break;
 
 	// Get PGD data size. Called from sceNpDrmEdataGetDataSize
@@ -2945,6 +2990,23 @@ int __IoIoctl(u32 id, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 out
 		}
 		break;
 
+	// The memory stick's raw device, from msstor.prx's ioctl handler (6.61, 08001620). Both read the
+	// same two state words: 0x02125008 gives 1 when a medium is in and the second isn't 1, and
+	// 0x02125009 gives 1 when it is (write protected, as far as we can tell). A Memory Stick Duo has
+	// no lock switch, so: in, and writable.
+	case 0x02125008:
+	case 0x02125009:
+		// It only reads the driver's state, without rescheduling (pspautotests io/msstor/msstor).
+		usec = 0;
+		if (!startsWithNoCase(f->fullpath, "msstor")) {
+			return hleLogError(Log::sceIo, SCE_KERNEL_ERROR_ERRNO_FUNCTION_NOT_SUPPORTED, "msstor ioctl on %s", f->fullpath.c_str());
+		}
+		if (!Memory::IsValidRange(outdataPtr, 4) || outlen < 4) {
+			return SCE_ERROR_MSSTOR_BAD_PARAMS;
+		}
+		Memory::WriteUnchecked_U32(cmd == 0x02125008 ? 1 : 0, outdataPtr);
+		return 0;
+
 	default:
 		{
 			int result = pspFileSystem.Ioctl(f->handle, cmd, indataPtr, inlen, outdataPtr, outlen, usec);
@@ -3039,14 +3101,14 @@ static u32 sceKernelRegisterStdoutPipe(u32 msgPipeUID) {
 	return 0;
 }
 
-static int IoAsyncFinish(int id) {
+static int IoAsyncFinish(MIPSState *mips, int id) {
 	u32 error;
 	FileNode *f = __IoGetFd(id, error);
 	if (f) {
 		// Reset this so the Io funcs don't reject the request.
 		f->pendingAsyncResult = false;
 		// Reset the PC back so we will run again on resume.
-		currentMIPS->pc = asyncThreads[id]->Entry();
+		mips->pc = asyncThreads[id]->Entry();
 
 		auto &params = asyncParams[id];
 

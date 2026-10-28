@@ -22,12 +22,18 @@
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Core/MemMap.h"
 #include "Core/Opcode.h"
 
 class PointerWrap;
+
+namespace MIPSComp {
+class JitInterface;
+}
 
 typedef Memory::Opcode MIPSOpcode;
 
@@ -178,13 +184,23 @@ class MIPSState {
 public:
 	MIPSState();
 	~MIPSState();
+	// It owns its JIT.
+	MIPSState(const MIPSState &) = delete;
+	MIPSState &operator=(const MIPSState &) = delete;
 
 	void Init();
+	// Init without the JIT.
+	void InitRegisters();
 	void Shutdown();
 	void Reset();
 	void UpdateCore(CPUCore desired);
 
 	void DoState(PointerWrap &p);
+	// For the next DoState load: keep the JIT blocks entirely inside these (address, size) ranges,
+	// code the load leaves as it is, instead of starting the JIT over.
+	void KeepJitBlocksOnNextLoad(std::vector<std::pair<u32, u32>> ranges) {
+		keepJitBlocks_ = std::move(ranges);
+	}
 
 	// MUST start with r and be followed by f, v, and t!
 	u32 r[32];
@@ -238,6 +254,11 @@ public:
 	// Debug stuff
 	u32 debugCount;	// can be used to count basic blocks before crashes, etc.
 
+	// COP0, for kernel code. Reads of Count (9) come from CoreTiming instead.
+	u32 cop0[32];
+	// COP0's control registers (cfc0/ctc0), which the firmware's exception code keeps state in.
+	u32 cop0Control[32];
+
 	// Temps needed for JitBranch.cpp experiments
 	u32 intBranchExit;
 	u32 jitBranchExit;
@@ -274,7 +295,12 @@ public:
 		return VFPUPrefixWriteMask(vfpuCtrl[VFPU_CTRL_DPREFIX], i);
 	}
 
-	bool HasDefaultPrefix() const;
+	bool HasDefaultPrefix() const {
+		return vfpuCtrl[VFPU_CTRL_SPREFIX] == 0xe4 && vfpuCtrl[VFPU_CTRL_TPREFIX] == 0xe4 && vfpuCtrl[VFPU_CTRL_DPREFIX] == 0;
+	}
+	bool IsMediaEngine() const {
+		return space && space->IsMediaEngine();
+	}
 
 	void SingleStep();
 	int RunLoopUntil(u64 globalTicks);
@@ -295,6 +321,12 @@ public:
 	// Doesn't need save stating.
 	std::vector<PendingCacheOperation> pendingInvalidates_;
 	bool invalidateAll_ = false;
+	std::vector<std::pair<u32, u32>> keepJitBlocks_;
+
+	// Owned. Null on the interpreter.
+	MIPSComp::JitInterface *jit = nullptr;
+	// What this CPU sees of memory. The main CPU's is Memory::g_mainSpace.
+	const Memory::AddressSpace *space = nullptr;
 };
 
 // Access control ('private') break standard layout. Let's not allow it, to avoid excessive

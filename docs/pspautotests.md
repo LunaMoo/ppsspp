@@ -57,6 +57,50 @@ Instead of a single PRX, you can pass a directory (e.g. `pspautotests/tests/thre
   same idea in emulated time, and both can be set at once. `--timeout` is the old name for `--timeout-wall`.
 - `--graphics=software` — uses software GPU backend (required for headless; no real GPU available).
 
+### Tests that need the real firmware modules
+
+A pspautotest is homebrew, so headless runs every library on our HLE for it
+(`iForceEnableHLE` in `headless/Headless.cpp`), even the ones the app runs from the firmware by
+default. Some tests only mean anything against the real module: `video/mp4/avchold` and
+`video/mpeg/decodeend` test the Media Engine through Sony's `libmp4.prx`, `mp4msv.prx` and
+`mpeg.prx`, which call our `sceVideocodec` HLE. Run on our HLE, `avchold` reports
+`0 samples, 0 decodes` for every stream (our sceMp4 is stubs: the log says `UNIMPL sceMp4Create`),
+and it fails without exercising the decoder at all.
+
+To run them as the hardware does, pass both:
+
+- `--disable-hle=N`, the `DisableHLEFlags` bits (`Core/ConfigValues.h`) of the libraries to run
+  for real, in decimal or `0x` hex. sceMpeg is 0x10 and sceMp4 is 0x100, so the video tests take
+  `--disable-hle=0x110`.
+- `--memstick=` pointing at a memory stick with a firmware dump in `PSP/NAND/flash0/kd`. `test.py`
+  otherwise hands headless the empty one beside the exe. Since the flag is explicit, headless exits
+  with an error naming the missing module rather than falling back to HLE.
+
+```
+python test.py video/mp4/avchold video/mpeg/decodeend --graphics=software --memstick=<app memstick> --disable-hle=0x110
+```
+
+CI has no firmware dump, so these tests stay in `tests_next`, and a change to the video path
+needs this run done by hand.
+
+### Multi-console ad hoc tests
+
+The tests in `tests/net/adhoc/pair` (one host program and one client program each, see
+[pspautotests-hardware.md](pspautotests-hardware.md#tests-that-need-two-psps)) need several emulators
+running at once, so `test.py` doesn't run them. `Tools/adhoc_multi.py` does: it starts one
+PPSSPPHeadless per role with `--realtime` (PSP speed, since the sides wait for each other over the real
+network) and `--instance=N` (its own 127.0.0.N address and MAC), the host with `--adhoc-server`, and
+compares each against its own `.expected`:
+
+```bash
+python3 Tools/adhoc_multi.py net/adhoc/pair/basic
+```
+
+Instance N binds to 127.0.0.N, which macOS doesn't have by default:
+`sudo ifconfig lo0 alias 127.0.0.2 up` (and .3, ... for more clients). With `--relay`, the instances
+use an aemu_postoffice server running locally (build it from `ext/aemu_postoffice/server_cpp`) in relay
+mode instead, which needs no aliases.
+
 ### What you'll see
 
 **Passing test:**

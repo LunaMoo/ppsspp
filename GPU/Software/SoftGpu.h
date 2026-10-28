@@ -256,6 +256,8 @@ public:
 
 	void BeginHostFrame(const DisplayLayoutConfig &config) override;
 	bool PresentedThisFrame() const override;
+	void SetPresentationOutput(const OutputParams *output) override;
+	bool PresentsToOtherOutput() const override;
 
 protected:
 	void FastRunLoop(DisplayList &list) override;

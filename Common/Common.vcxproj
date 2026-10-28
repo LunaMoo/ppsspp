@@ -290,6 +290,10 @@
     <ClInclude Include="..\ext\aemu_postoffice\client\postoffice_client.h" />
     <ClInclude Include="..\ext\aemu_postoffice\client\postoffice_mem.h" />
     <ClInclude Include="..\ext\aemu_postoffice\client\sock_impl.h" />
+    <ClInclude Include="..\ext\aemu_postoffice\client\list.h" />
+    <ClInclude Include="..\ext\aemu_postoffice\client\enet.h" />
+    <ClInclude Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl.h" />
+    <ClInclude Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl_mem.h" />
     <ClInclude Include="..\ext\at3_standalone\at3_decoders.h" />
     <ClInclude Include="..\ext\at3_standalone\atrac.h" />
     <ClInclude Include="..\ext\at3_standalone\atrac3data.h" />
@@ -448,6 +452,7 @@
     <ClInclude Include="GPU\ShaderWriter.h" />
     <ClInclude Include="GPU\thin3d.h" />
     <ClInclude Include="GPU\thin3d_create.h" />
+    <ClInclude Include="GPU\Vulkan\VulkanDriverVars.h" />
     <ClInclude Include="GPU\Vulkan\VulkanAlloc.h" />
     <ClInclude Include="GPU\Vulkan\VulkanBarrier.h" />
     <ClInclude Include="GPU\Vulkan\VulkanContext.h" />
@@ -491,6 +496,8 @@
     <ClInclude Include="Net\WebsocketServer.h" />
     <ClInclude Include="Profiler\Profiler.h" />
     <ClInclude Include="Render\AtlasGen.h" />
+    <ClInclude Include="Render\DrawEnum.h" />
+    <ClInclude Include="Render\DropShadow.h" />
     <ClInclude Include="Render\DrawBuffer.h" />
     <ClInclude Include="Render\ManagedTexture.h" />
     <ClInclude Include="Render\TextureAtlas.h" />
@@ -581,12 +588,56 @@
     <ClInclude Include="x64Emitter.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\ext\aemu_postoffice\client\delay_impl_cpp.cpp" />
-    <ClCompile Include="..\ext\aemu_postoffice\client\log_impl_ppsspp.cpp" />
-    <ClCompile Include="..\ext\aemu_postoffice\client\mutex_impl_cpp.cpp" />
-    <ClCompile Include="..\ext\aemu_postoffice\client\postoffice.c" />
-    <ClCompile Include="..\ext\aemu_postoffice\client\postoffice_mem_stdc.c" />
-    <ClCompile Include="..\ext\aemu_postoffice\client\sock_impl_windows.c" />
+    <ClCompile Include="..\ext\aemu_postoffice\client\delay_impl_cpp.cpp">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\log_impl_ppsspp.cpp">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\mutex_impl_cpp.cpp">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\postoffice.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\postoffice_mem_stdc.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\sock_impl_windows.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\list.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\enet.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl_mem.c">
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_CRTDBG_MAP_ALLOC</UndefinePreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="..\ext\at3_standalone\atrac.cpp" />
     <ClCompile Include="..\ext\at3_standalone\atrac3.cpp" />
     <ClCompile Include="..\ext\at3_standalone\atrac3plus.cpp" />
@@ -971,6 +1022,7 @@
     <ClCompile Include="Net\WebsocketServer.cpp" />
     <ClCompile Include="Profiler\Profiler.cpp" />
     <ClCompile Include="Render\AtlasGen.cpp" />
+    <ClCompile Include="Render\DropShadow.cpp" />
     <ClCompile Include="Render\DrawBuffer.cpp" />
     <ClCompile Include="Render\ManagedTexture.cpp" />
     <ClCompile Include="Render\TextureAtlas.cpp" />

@@ -200,6 +200,7 @@ add_library(Common STATIC
 	GPU/Vulkan/VulkanBarrier.h
 	GPU/Vulkan/VulkanDebug.cpp
 	GPU/Vulkan/VulkanDebug.h
+	GPU/Vulkan/VulkanDriverVars.h
 	GPU/Vulkan/VulkanContext.cpp
 	GPU/Vulkan/VulkanContext.h
 	GPU/Vulkan/FixedSPIRVCache.h
@@ -272,10 +273,13 @@ add_library(Common STATIC
 	Profiler/Profiler.h
 	Render/AtlasGen.cpp
 	Render/AtlasGen.h
+	Render/DropShadow.cpp
+	Render/DropShadow.h
 	Render/TextureAtlas.cpp
 	Render/TextureAtlas.h
 	Render/DrawBuffer.cpp
 	Render/DrawBuffer.h
+	Render/DrawEnum.h
 	Render/ManagedTexture.cpp
 	Render/ManagedTexture.h
 	Render/Text/Font.h

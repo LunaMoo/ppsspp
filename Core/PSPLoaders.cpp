@@ -35,6 +35,7 @@
 #include "Core/ELF/ParamSFO.h"
 #include "Core/ELF/PBPReader.h"
 #include "Core/ELF/PrxDecrypter.h"
+#include "Core/FileLoaders/PS1EbootFileLoader.h"
 
 #include "Core/FileSystems/BlockDevices.h"
 #include "Core/FileSystems/BlobFileSystem.h"
@@ -55,6 +56,8 @@
 #include "Core/System.h"
 #include "Core/PSPLoaders.h"
 #include "Core/HLE/sceKernelModule.h"
+#include "Core/HLE/PopsBoot.h"
+#include "Core/Util/PSARUnpack.h"
 
 static void UseLargeMem(int memsize) {
 	if (memsize != 1) {
@@ -474,7 +477,7 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 		if (pspFileSystem.GetFileInfo("disc0:/SYSTEM.CNF;1").exists || pspFileSystem.GetFileInfo("disc0:/PSX.EXE;1").exists) {
 			*error_string = "PPSSPP plays PSP games, not PlayStation 1 or 2 games.";
 		} else if (pspFileSystem.GetFileInfo("disc0:/UMD_VIDEO/PLAYLIST.UMD").exists) {
-			*error_string = "PPSSPP doesn't support UMD Video.";
+			*error_string = std::string("UMD Video plays in the XMB, which needs PSP firmware ") + UMD_VIDEO_MIN_FIRMWARE + " or later.";
 		} else if (pspFileSystem.GetFileInfo("disc0:/UMD_AUDIO/PLAYLIST.UMD").exists) {
 			*error_string = "PPSSPP doesn't support UMD Music.";
 		} else if (pspFileSystem.GetDirListing("disc0:/").empty()) {
@@ -529,7 +532,7 @@ static Path NormalizePath(const Path &path) {
 }
 
 bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string_view discId, bool loadGameConfigs, std::string *error_string) {
-	// This is really just for headless, might need tweaking later.
+	// Set by --mount, which also lets the VSH boot with a disc in the drive.
 	if (PSP_CoreParameter().mountIsoLoader != nullptr) {
 		std::shared_ptr<BlockDevice> bd(ConstructBlockDevice(PSP_CoreParameter().mountIsoLoader, error_string));
 		if (bd) {
@@ -669,7 +672,45 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string_view discId, bool load
 		g_Config.LoadGameConfig(discID);
 	}
 
-	return __KernelLoadExec(currentMIPS, finalName.c_str(), 0, error_string);
+	// The XMB coming back from a game it launched gets the args it launched it with.
+	const std::vector<u8> &vshmainArgs = PSP_CoreParameter().vshmainArgs;
+	return __KernelLoadExec(currentMIPS, finalName.c_str(), 0, error_string, vshmainArgs.empty() ? nullptr : &vshmainArgs);
+}
+
+// A PS1 EBOOT, run by the firmware's POPS manager, which loads its PS1 emulator for the game.
+bool Load_PSP_POPS(FileLoader *fileLoader, std::string *error_string) {
+	static const char *const popsmanPath = "flash0:/kd/popsman.prx";
+	if (!pspFileSystem.GetFileInfo(popsmanPath).exists) {
+		auto er = GetI18NCategory(I18NCat::ERRORS);
+		*error_string = er->T("PS1NoFirmware", "PS1 games need the PS1 emulator in the PSP's firmware, and no firmware is installed. Install firmware 6.00 to 6.61 from an official PSP update file in Settings > Tools > PSP Firmware. Starting a PSP game whose disc has an updater on it also installs its firmware.");
+		return false;
+	}
+
+	// Its directory as host0:, as for a homebrew EBOOT. An EBOOT made from a disc image is the only file there.
+	const Path fullPath = fileLoader->GetPath();
+	std::string gamePath;
+	if (dynamic_cast<PS1EbootFileLoader *>(fileLoader)) {
+		pspFileSystem.Mount("host0:", std::make_shared<BlobFileSystem>(&pspFileSystem, fileLoader, "EBOOT.PBP"));
+		gamePath = "host0:/EBOOT.PBP";
+	} else {
+		auto fs = std::make_shared<DirectoryFileSystem>(&pspFileSystem, fullPath.NavigateUp(), FileSystemFlags::SIMULATE_FAT32 | FileSystemFlags::CARD);
+		pspFileSystem.Mount("host0:", fs);
+		gamePath = "host0:/" + fullPath.GetFilename();
+	}
+	pspFileSystem.SetStartingDirectory("host0:/");
+
+	__PopsBootInit();
+	INFO_LOG(Log::Loader, "POPS: booting %s through %s", gamePath.c_str(), popsmanPath);
+	if (!__KernelLoadExec(currentMIPS, popsmanPath, 0, error_string)) {
+		return false;
+	}
+	__PopsBootLoadModules();
+	if (!__PopsBootStartInit(fileLoader, gamePath, error_string)) {
+		return false;
+	}
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
+	g_OSD.Show(OSDType::MESSAGE_WARNING, sy->T("PS1 support is still experimental. The game might not work, or there may be glitches."), 6.0f);
+	return true;
 }
 
 bool Load_PSP_GE_Dump(FileLoader *fileLoader, std::string *error_string) {

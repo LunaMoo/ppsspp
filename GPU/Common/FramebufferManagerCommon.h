@@ -295,6 +295,7 @@ struct DrawPixelsEntry {
 struct GPUDebugBuffer;
 class DrawEngineCommon;
 class PresentationCommon;
+struct OutputParams;
 class ShaderManagerCommon;
 class TextureCacheCommon;
 struct DisplayLayoutConfig;
@@ -523,6 +524,8 @@ public:
 	}
 
 	bool PresentedThisFrame() const;
+	void SetPresentationOutput(const OutputParams *output);
+	bool PresentsToOtherOutput() const;
 
 	const std::vector<VirtualFramebuffer *> &GetVFBs() const {
 		return vfbs_;

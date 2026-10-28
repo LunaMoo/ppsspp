@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <string_view>
 #ifndef _MSC_VER
@@ -32,6 +33,8 @@ struct ConfigBlock {
 	virtual bool CanResetToDefault() const { return false; }
 	// If a block returns false here (like Config itself does), resetting to default will happen by the old per-setting mechanism.
 	virtual bool ResetToDefault(std::string_view blockName) { return false; }
+	// For blocks that can reset themselves: a new block with the defaults of the named one, to read defaults from.
+	virtual std::unique_ptr<ConfigBlock> NewDefault(std::string_view blockName) const { return nullptr; }
 	virtual size_t Size() const { return sizeof(ConfigBlock); }  // For sanity checks
 };
 
@@ -135,6 +138,12 @@ enum class GPUBackend {
 	METAL = 4,
 };
 
+// What an external display (a TV) shows, where the platform lets us choose. See docs/multi-swapchain.md.
+enum class ExternalDisplayMode {
+	SHOW_GAME = 0,  // The game, with the controls and the menus on the device. Needs Metal or Vulkan.
+	MIRROR = 1,
+};
+
 enum class DepthRasterMode {
 	DEFAULT = 0,
 	LOW_QUALITY = 1,
@@ -145,6 +154,11 @@ enum class DepthRasterMode {
 enum class AudioSyncMode {
 	GRANULAR = 0,
 	CLASSIC_PITCH = 1,
+};
+
+enum class AndroidAudioApi {
+	AAUDIO = 0,
+	OPENSLES = 1,
 };
 
 // TODO: We can make this more fine-grained.
@@ -249,7 +263,12 @@ enum TiltTypes {
 	TILT_DPAD,
 	TILT_ACTION_BUTTON,
 	TILT_TRIGGER_BUTTONS,
+	TILT_ANALOG_RIGHT,
 };
+
+inline bool TiltTypeIsAnalog(int type) {
+	return type == TILT_ANALOG || type == TILT_ANALOG_RIGHT;
+}
 
 enum class ScreenEdgePosition {
 	BOTTOM_LEFT = 0,

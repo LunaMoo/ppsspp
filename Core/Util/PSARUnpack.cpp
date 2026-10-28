@@ -619,7 +619,9 @@ bool PSARReader::Init(std::string *error) {
 		return false;
 	}
 
-	// The first block is a text record ending in the firmware version, e.g. "...,6.61".
+	// The first block is a text record ending in the firmware version, e.g. "...,6.61". In a version
+	// 1 archive it's only numbers (1.00's: the build, 106, and the record count, 214) and this finds
+	// no text, so UnpackPSAR() takes the version from the firmware's version.txt instead.
 	const char *text = (const char *)block_.data() + 0x10;
 	const size_t textLen = strnlen(text, PSAR_ENTRY_SIZE - 0x10);
 	const std::string_view firstLine(text, textLen);
@@ -729,7 +731,12 @@ void PSARReader::EnsureContents() {
 	if (entryCompression_ == PSARCompression::Zlib) {
 		entryData_.resize(contentExpandedSize_);
 		uLongf destLen = contentExpandedSize_;
-		const int zResult = uncompress(entryData_.data(), &destLen, block2_.data(), decoded);
+		uLong sourceLen = decoded;
+		int zResult = uncompress2(entryData_.data(), &destLen, block2_.data(), &sourceLen);
+		// Handle zip streams missing their Adler-32 checksum.
+		if (zResult == Z_BUF_ERROR && sourceLen == (uLong)decoded && destLen == contentExpandedSize_ && decrypted_) {
+			zResult = Z_OK;
+		}
 		if (zResult != Z_OK || destLen != contentExpandedSize_) {
 			WARN_LOG(Log::Loader, "PSAR: inflate failed for '%s' (%d)", entryName_.c_str(), zResult);
 			entryData_.clear();
@@ -860,6 +867,8 @@ private:
 	bool quit_ = false;
 };
 
+static void ParseVersionTxt(std::string_view contents, InstalledFirmwareInfo *info);
+
 bool UnpackPSAR(const u8 *psar, size_t psarSize, const Path &outputDir, const PSARUnpackOptions &options, PSARUnpackStats *stats, std::string *error) {
 	PSARUnpackStats localStats;
 	if (!stats) {
@@ -988,6 +997,15 @@ bool UnpackPSAR(const u8 *psar, size_t psarSize, const Path &outputDir, const PS
 		}
 
 		realName = CanonicalFlashPath(realName);
+
+		// A version 1 archive (1.00) has no version record, so take it from the firmware's own
+		// version.txt, whether or not a filter wants that file.
+		if (stats->firmwareVersion.empty() && equalsNoCase(realName, "flash0:/vsh/etc/version.txt")) {
+			const std::vector<u8> &data = reader.entryData();
+			InstalledFirmwareInfo info;
+			ParseVersionTxt(std::string_view((const char *)data.data(), data.size()), &info);
+			stats->firmwareVersion = info.version;
+		}
 
 		if (realName.empty()) {
 			// No list claimed this one. Still worth writing out under its short name, but a
@@ -1356,6 +1374,46 @@ bool FirmwareVersionSupportsVSH(std::string_view version) {
 	return FirmwareVersionToInt(version) >= 150;
 }
 
+// Measured by booting Bourne Supremacy with auto-start on: 2.71 through 6.61 reach its disc menu.
+// 1.50, 2.00 and 2.60 crash in video_plugin or paf as soon as the disc is in the drive, and 2.50
+// says the system software (version ".") is too old for it.
+const char *const UMD_VIDEO_MIN_FIRMWARE = "2.71";
+
+bool FirmwareVersionPlaysUmdVideo(std::string_view version) {
+	return FirmwareVersionSupportsVSH(version) && FirmwareVersionToInt(version) >= FirmwareVersionToInt(UMD_VIDEO_MIN_FIRMWARE);
+}
+
+bool InstalledFirmwareRunsPS1Discs() {
+	// The POPS managers PopsBoot knows for converted EBOOTs: 3.95 to 6.61. A version in between that it
+	// doesn't know fails the boot with a message saying so.
+	InstalledFirmwareInfo info;
+	ReadInstalledFirmwareInfo(g_Config.nandRootDirectory, &info, false);
+	const int version = FirmwareVersionToInt(info.version);
+	return version >= 395 && version <= 661 && File::Exists(g_Config.nandRootDirectory / "flash0/kd/popsman.prx");
+}
+
+Path GetUmdVideoVSHPath() {
+	InstalledFirmwareInfo info;
+	ReadInstalledFirmwareInfo(g_Config.nandRootDirectory, &info, false);
+	if (!info.hasVsh || !FirmwareVersionPlaysUmdVideo(info.version)) {
+		return Path();
+	}
+	return g_Config.nandRootDirectory / "flash0/vsh/module/vshmain.prx";
+}
+
+std::string GetVSHTitle(const Path &path) {
+	if (!equalsNoCase(path.GetFilename(), "vshmain.prx")) {
+		return std::string();
+	}
+	// The firmware it's from: flash0:/vsh/module/vshmain.prx has flash0:/vsh/etc/version.txt.
+	InstalledFirmwareInfo info;
+	std::string versionTxt;
+	if (File::ReadTextFileToString(path.NavigateUp().NavigateUp() / "etc/version.txt", &versionTxt)) {
+		ParseVersionTxt(versionTxt, &info);
+	}
+	return info.version.empty() ? std::string("XMB") : "XMB " + info.version;
+}
+
 std::string BundledUpdateInfo::Describe() const {
 	if (!present) {
 		return std::string();
@@ -1467,7 +1525,10 @@ static std::string ReadUpdaterVersionFromArchiveHeader() {
 }
 
 bool MountedDiscHasUpdater() {
-	return pspFileSystem.GetFileInfo(std::string("disc0:/") + UPDATE_PSAR_SUFFIX).exists;
+	// Plenty of discs keep the updater's files with nothing in them: UMD Video discs ship a 0-byte
+	// DATA.BIN next to a real PARAM.SFO, PSN releases zero-fill it. Only an actual archive counts.
+	std::vector<u8> head;
+	return ReadHeadFromMountedDisc(UPDATE_PSAR_SUFFIX, 4, &head) && head.size() == 4 && ReadU32(head.data()) == PSAR_MAGIC;
 }
 
 std::string ReadMountedDiscUpdaterVersion() {

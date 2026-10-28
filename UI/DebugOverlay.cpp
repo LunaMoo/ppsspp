@@ -72,17 +72,15 @@ static void DrawJitStats(UIContext *ctx, const Bounds &bounds) {
 
 	char statbuf[1024];
 	StringWriter w(statbuf, sizeof(statbuf));
-	if (MIPSComp::jit) {
+	if (mipsr4k.jit) {
 		MIPSComp::JitStats stats;
-		MIPSComp::jit->GetStats(&stats);
+		mipsr4k.jit->GetStats(&stats);
 		const double irPercent = stats.irArenaSize ? 100.0 * stats.irArenaUsed / stats.irArenaSize : 0.0;
 		w.F("Blocks: %d (%d valid)\n", stats.numBlocks, stats.numValidBlocks);
 		if (stats.codeSize) {
-			// The native JITs compile from the IR, and keep it for the debugger.
 			w.F("Native code: %0.2f / %0.2f MB (%0.1f%%)\n", stats.codeUsed / (1024.0 * 1024.0), stats.codeSize / (1024.0 * 1024.0),
 				100.0 * stats.codeUsed / stats.codeSize);
-			w.F("IR (debug info): %d / %d instructions (%0.1f%%)\n", (int)stats.irArenaUsed, (int)stats.irArenaSize, irPercent);
-			w.F("Cleared because full: native code %d, IR %d\n", stats.codeFullClears, stats.irArenaFullClears);
+			w.F("Cleared because full: %d\n", stats.codeFullClears);
 		} else {
 			w.F("IR arena: %d / %d instructions (%0.1f%%)\n", (int)stats.irArenaUsed, (int)stats.irArenaSize, irPercent);
 			w.F("Cleared because full: %d\n", stats.irArenaFullClears);
@@ -553,8 +551,10 @@ void DrawFPS(UIContext *ctx, const Bounds &bounds) {
 	if (System_GetPropertyBool(SYSPROP_CAN_READ_BATTERY_PERCENTAGE)) {
 		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::BATTERY_PERCENT) {
 			const int percentage = System_GetPropertyInt(SYSPROP_BATTERY_PERCENTAGE);
-			// Just plain append battery. Add linebreak?
-			w.F(" Battery: %d%%", percentage);
+			// Just plain append battery. Add linebreak? Nothing without a battery.
+			if (percentage >= 0) {
+				w.F(" Battery: %d%%", percentage);
+			}
 		}
 	}
 

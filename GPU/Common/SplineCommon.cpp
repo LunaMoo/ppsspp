@@ -57,14 +57,20 @@ public:
 
 namespace Spline {
 
-static void CopyQuadIndex(u16 *&indices, GEPatchPrimType type, const int idx0, const int idx1, const int idx2, const int idx3) {
+// Returns the number of indices written.
+static int CopyQuadIndex(u16 *&indices, GEPatchPrimType type, const int idx0, const int idx1, const int idx2, const int idx3, bool rightEdge) {
 	if (type == GE_PATCHPRIM_LINES) {
 		// A zigzag per quad: left edge down, the diagonal up to the top right, right edge down (gpu/probe exp175,
-		// exact: line colors and lit start pixels show the directions, and overlapping pixels the order).
+		// exact: line colors and lit start pixels show the directions, and overlapping pixels the order). The right
+		// edge only on a patch's last column, as the next quad's left edge is the same line (exp257, counted with
+		// additive blending).
 		*(indices++) = idx0;
 		*(indices++) = idx2;
 		*(indices++) = idx2;
 		*(indices++) = idx1;
+		if (!rightEdge) {
+			return 4;
+		}
 		*(indices++) = idx1;
 		*(indices++) = idx3;
 	} else {
@@ -75,16 +81,16 @@ static void CopyQuadIndex(u16 *&indices, GEPatchPrimType type, const int idx0, c
 		*(indices++) = idx2;
 		*(indices++) = idx3;
 	}
+	return 6;
 }
 
-void BuildIndex(u16 *indices, int &count, int num_u, int num_v, GEPatchPrimType prim_type, int total) {
+void BuildIndex(u16 *indices, int &count, int num_u, int num_v, int patch_u, GEPatchPrimType prim_type, int total) {
 	for (int v = 0; v < num_v; ++v) {
 		for (int u = 0; u < num_u; ++u) {
 			int idx0 = v * (num_u + 1) + u + total; // Top left
 			int idx2 = (v + 1) * (num_u + 1) + u + total; // Bottom left
 
-			CopyQuadIndex(indices, prim_type, idx0, idx0 + 1, idx2, idx2 + 1);
-			count += 6;
+			count += CopyQuadIndex(indices, prim_type, idx0, idx0 + 1, idx2, idx2 + 1, (u + 1) % patch_u == 0);
 		}
 	}
 }
@@ -1375,8 +1381,12 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	// Where we can, tessellate straight into decoded form, where DecodeVerts would put it, so there's no second
 	// decode. Through mode is left to the decoder, which also tracks the UV bounds there. Anything already
 	// queued would decode on top of the output, but with flushOnParams_ nothing is. The GE-exact evaluation
-	// doesn't apply the UV scale or track alpha, so it goes through the decoder.
-	const bool predecoded = curvesPredecoded_ && !surface.geExact && !(vertType & GE_VTYPE_THROUGH) && numDrawVerts_ == 0;
+	// doesn't apply the UV scale or track alpha, so it goes through the decoder. Nor can a curve of lines or
+	// points too large to expand in one draw: SubmitPrim splits those, flushing between the parts, and the flushes
+	// decode over the output.
+	surface.Init(DECODED_VERTEX_BUFFER_SIZE / 2 / sizeof(SimpleVertex));
+	const int indexCount = 6 * surface.num_patches_u * surface.tess_u * surface.num_patches_v * surface.tess_v;
+	const bool predecoded = ExpandedVertexCount(PatchPrimToPrim(surface.primType), indexCount) <= VERTEX_BUFFER_MAX && curvesPredecoded_ && !surface.geExact && !(vertType & GE_VTYPE_THROUGH) && numDrawVerts_ == 0;
 	// The output goes in one half of decoded_, the control points and other temporaries in the other.
 	u8 *const outputBuf = predecoded ? decoded_ : decoded_ + DECODED_VERTEX_BUFFER_SIZE / 2;
 	SimpleBufferManager managedBuf(predecoded ? decoded_ + DECODED_VERTEX_BUFFER_SIZE / 2 : decoded_, DECODED_VERTEX_BUFFER_SIZE / 2);
@@ -1442,12 +1452,11 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 
 	OutputBuffers output;
 	output.vertices = (SimpleVertex *)outputBuf;
-	output.indices = decIndex_;
+	// In the upper half of decIndex_: when SubmitPrim splits the curve, the flushes between the parts generate
+	// indices in the lower half, over the parts still to come (NFS Most Wanted's music visualizer, #22104).
+	output.indices = decIndex_ + DECODED_INDEX_BUFFER_SIZE / sizeof(u16) / 2;
 	output.count = 0;
 
-	const int maxVerts = DECODED_VERTEX_BUFFER_SIZE / 2 / vertexSize;
-
-	surface.Init(maxVerts);
 	if (predecoded) {
 		const GETexMapMode uvGenMode = gstate.getUVGenMode();
 		if (uvGenMode == GE_TEXMAP_TEXTURE_COORDS || uvGenMode == GE_TEXMAP_UNKNOWN) {

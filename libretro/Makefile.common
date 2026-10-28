@@ -1,6 +1,6 @@
 HAVE_LIBRETRO_VFS ?= 1
 
-FFMPEGDIR		= $(CORE_DIR)/ffmpeg
+FFMPEGDIR		= $(CORE_DIR)/ext/ffmpeg
 LIBRETRODIR		= $(CORE_DIR)/libretro
 COREDIR			= $(CORE_DIR)/Core
 COMMONDIR		= $(CORE_DIR)/Common
@@ -30,7 +30,6 @@ INCFLAGS += \
 	-I$(ZSTDDIR) \
 	-I$(EXTDIR)/snappy \
 	-I$(FFMPEGDIR) \
-	$(FFMPEGINCFLAGS) \
 	-I$(EXTDIR)/cityhash \
 	-I$(EXTDIR)/armips \
 	-I$(EXTDIR)/armips/ext/filesystem/include \
@@ -511,6 +510,7 @@ SOURCES_CXX += \
 	$(COMMONDIR)/Net/WebsocketServer.cpp \
 	$(COMMONDIR)/Render/ManagedTexture.cpp \
 	$(COMMONDIR)/Render/DrawBuffer.cpp \
+	$(COMMONDIR)/Render/DropShadow.cpp \
 	$(COMMONDIR)/Render/TextureAtlas.cpp \
 	$(COMMONDIR)/Serialize/Serializer.cpp \
 	$(COMMONDIR)/Thread/ThreadUtil.cpp \
@@ -557,6 +557,7 @@ SOURCES_CXX += \
 	$(GPUCOMMONDIR)/DrawEngineCommon.cpp \
 	$(GPUCOMMONDIR)/SplineCommon.cpp \
 	$(GPUCOMMONDIR)/FramebufferManagerCommon.cpp \
+	$(GPUCOMMONDIR)/Overlay.cpp \
 	$(GPUCOMMONDIR)/PresentationCommon.cpp \
 	$(GPUCOMMONDIR)/ReinterpretFramebuffer.cpp \
 	$(GPUCOMMONDIR)/ShaderId.cpp \
@@ -684,7 +685,11 @@ endif
 
 SOURCES_C += \
 	       $(EXTDIR)/aemu_postoffice/client/postoffice.c \
-	       $(EXTDIR)/aemu_postoffice/client/postoffice_mem_stdc.c
+	       $(EXTDIR)/aemu_postoffice/client/postoffice_mem_stdc.c \
+	       $(EXTDIR)/aemu_postoffice/client/list.c \
+	       $(EXTDIR)/aemu_postoffice/client/enet.c \
+	       $(EXTDIR)/aemu_postoffice/adhocctl/client/adhocctl.c \
+	       $(EXTDIR)/aemu_postoffice/adhocctl/client/adhocctl_mem.c
 
 SOURCES_CXX += \
 	       $(EXTDIR)/aemu_postoffice/client/mutex_impl_cpp.cpp \
@@ -718,6 +723,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/FileLoaders/RetryingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/RamCachingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/LocalFileLoader.cpp \
+	       $(COREDIR)/FileLoaders/PS1EbootFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/ZipFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/ZArchiveFileLoader.cpp \
 	       $(COREDIR)/CoreTiming.cpp \
@@ -757,9 +763,11 @@ SOURCES_CXX += \
 	       $(COREDIR)/Font/PGF.cpp \
 	       $(COREDIR)/HLE/HLE.cpp \
 	       $(COREDIR)/HLE/KUBridge.cpp \
+	       $(COREDIR)/HLE/sceSysreg.cpp \
 	       $(COREDIR)/HLE/NetInetConstants.cpp \
 	       $(COREDIR)/HLE/SocketManager.cpp \
 	       $(COREDIR)/HLE/Plugins.cpp \
+	       $(COREDIR)/HLE/PopsBoot.cpp \
 	       $(COREDIR)/HLE/sceSha256.cpp \
 	       $(COREDIR)/HLE/sceSircs.cpp \
 	       $(COREDIR)/HLE/sceG729.cpp \
@@ -770,6 +778,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/HLE/AtracCtx.cpp \
 	       $(COREDIR)/HLE/AtracCtx2.cpp \
 	       $(COREDIR)/HLE/sceAdler.cpp \
+	       $(COREDIR)/HLE/sceAmctrl.cpp \
 	       $(COREDIR)/HLE/sceAtrac.cpp \
 	       $(COREDIR)/HLE/sceAudio.cpp \
 	       $(COREDIR)/HLE/sceAudiocodec.cpp \
@@ -850,6 +859,9 @@ SOURCES_CXX += \
 	       $(COREDIR)/HW/Camera.cpp \
 	       $(COREDIR)/HW/Display.cpp \
 	       $(COREDIR)/HW/GpioMMIO.cpp \
+	       $(COREDIR)/HW/MMIO.cpp \
+	       $(COREDIR)/HW/MeMMIO.cpp \
+	       $(COREDIR)/HW/PopsMMIO.cpp \
 	       $(COREDIR)/HW/SimpleAudioDec.cpp \
 	       $(COREDIR)/HW/Atrac3Standalone.cpp \
 	       $(COREDIR)/HW/AsyncIOManager.cpp \
@@ -891,6 +903,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/MIPS/MIPSStackWalk.cpp \
 	       $(COREDIR)/MIPS/MIPSVFPUUtils.cpp \
 	       $(COREDIR)/MIPS/MIPSTracer.cpp \
+	       $(COREDIR)/MIPS/MeCore.cpp \
 	       $(COREDIR)/MemFault.cpp \
 	       $(COREDIR)/MemMap.cpp \
 	       $(COREDIR)/MemMapFunctions.cpp \
@@ -1116,6 +1129,7 @@ SOURCES_C += $(LIBRETROCOMMONDIR)/compat/compat_posix_string.c \
              $(LIBRETROCOMMONDIR)/file/file_path_io.c \
              $(LIBRETROCOMMONDIR)/streams/file_stream.c \
              $(LIBRETROCOMMONDIR)/streams/file_stream_transforms.c \
+			 $(LIBRETROCOMMONDIR)/string/rstrtod.c \
              $(LIBRETROCOMMONDIR)/string/stdstring.c \
              $(LIBRETROCOMMONDIR)/time/rtime.c \
              $(LIBRETROCOMMONDIR)/vfs/vfs_implementation.c

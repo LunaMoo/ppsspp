@@ -401,9 +401,13 @@ int64_t System_GetPropertyInt(SystemProperty prop) {
 	{
 		SYSTEM_POWER_STATUS status{};
 		if (GetSystemPowerStatus(&status)) {
+			// -1 without a battery (a desktop), like SDL_GetPowerInfo.
+			if (status.BatteryFlag == 128 || status.BatteryFlag == 255) {
+				return -1;
+			}
 			return status.BatteryLifePercent < 255 ? status.BatteryLifePercent : 100;
 		} else {
-			return 100;
+			return -1;
 		}
 	}
 	default:
@@ -637,7 +641,7 @@ static std::wstring FinalizeFilter(std::wstring filter) {
 static std::wstring MakeWindowsFilter(BrowseFileType type) {
 	switch (type) {
 	case BrowseFileType::BOOTABLE:
-		return FinalizeFilter(L"All supported file types (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx *.zip *.ppdmp)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx;*.zip;*.ppdmp|PSP ROMs (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||");
+		return FinalizeFilter(L"All supported file types (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx *.zip *.ppdmp *.cue *.ccd *.mds *.mdf *.bin *.img)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx;*.zip;*.ppdmp;*.cue;*.ccd;*.mds;*.mdf;*.bin;*.img|PSP ROMs (*.iso *.cso *.chd *.zar *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.zar;*.prx|PS1 disc images (*.cue *.ccd *.mds *.mdf *.chd *.bin *.img *.iso *.pbp)|*.cue;*.ccd;*.mds;*.mdf;*.chd;*.bin;*.img;*.iso;*.pbp|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||");
 	case BrowseFileType::SAVE_STATE:
 		return FinalizeFilter(L"Save state files (*.ppst)|*.ppst|All files (*.*)|*.*||");
 	case BrowseFileType::INI:
@@ -1263,6 +1267,10 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 
 	HWND hwndMain = MainWindow::GetHWND();
 	Achievements::InitializeRAIntegration(hwndMain);
+
+	if (cmdLineOptions.gameWindow.value_or(false)) {
+		MainWindow::CreateGameWindow();
+	}
 
 	//initialize custom controls
 	CtrlDisAsmView::init();

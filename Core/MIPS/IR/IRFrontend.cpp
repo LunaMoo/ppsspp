@@ -44,11 +44,14 @@ IRFrontend::IRFrontend(bool startDefaultPrefix) {
 	g_breakpoints.ClearSkipFirst();
 }
 
-void IRFrontend::DoState(PointerWrap &p) {
+bool IRFrontend::DoState(PointerWrap &p) {
 	auto s = p.Section("Jit", 1, 2);
 	if (!s)
-		return;
+		return false;
 
+	const bool oldStartDefaultPrefix = js.startDefaultPrefix;
+	const bool oldHasSetRounding = js.hasSetRounding;
+	const u8 oldLastSetRounding = js.lastSetRounding;
 	Do(p, js.startDefaultPrefix);
 	if (s >= 2) {
 		Do(p, js.hasSetRounding);
@@ -62,6 +65,23 @@ void IRFrontend::DoState(PointerWrap &p) {
 	// The debugger sets this so that "go" on a breakpoint will actually... go.
 	// But if they reset, we can end up hitting it by mistake, since it's based on PC and ticks.
 	g_breakpoints.ClearSkipFirst();
+
+	if (p.mode != PointerWrap::MODE_READ) {
+		return false;
+	}
+	// Blocks only switch rounding modes if hasSetRounding was set when they were compiled, and
+	// assume default prefixes at their start if startDefaultPrefix was.
+	if ((js.hasSetRounding && !oldHasSetRounding) || (!js.startDefaultPrefix && oldStartDefaultPrefix)) {
+		return true;
+	}
+	// The other way round, the blocks already compiled just do more than they need to. Keep the
+	// flags that way, or a loaded hasSetRounding of false would have UpdateFCR31() throw them all
+	// away for a rounding mode they handle fine. lastSetRounding says they were compiled with the
+	// rounding checks, so the next compile doesn't throw them away to add them either.
+	js.hasSetRounding = js.hasSetRounding || oldHasSetRounding;
+	js.startDefaultPrefix = js.startDefaultPrefix && oldStartDefaultPrefix;
+	js.lastSetRounding = oldLastSetRounding;
+	return false;
 }
 
 bool IRFrontend::UpdateFCR31(u32 fcr31) {
@@ -143,7 +163,7 @@ bool IRFrontend::CheckRounding(u32 blockAddress) {
 
 	// Drat.  The VFPU hit an uneaten prefix at the end of a block.
 	if (js.startDefaultPrefix && js.MayHavePrefix()) {
-		WARN_LOG_REPORT(Log::JIT, "An uneaten prefix at end of block for %08x", blockAddress);
+		WARN_LOG(Log::JIT, "An uneaten prefix at end of block for %08x", blockAddress);
 		logBlocks = 1;
 		js.LogPrefix();
 
@@ -218,7 +238,19 @@ void IRFrontend::Comp_Generic(MIPSOpcode op) {
 	const bool setsMode = MIPS_IS_CTC1_FCR31(op.encoding);
 	if (isSyscall || setsMode)
 		RestoreRoundingMode(setsMode);
+	const bool endsBlock = (info & ENDS_BLOCK) != 0;
+	if (endsBlock) {
+		ir.Write(IROp::Downcount, 0, 0, 0, js.downcountAmount);
+		js.downcountAmount = 0;
+		// It goes on from its own pc (halt).
+		ir.Write(IROp::SetPCConst, 0, 0, 0, GetCompilerPC());
+	}
 	ir.Write(IROp::Interpret, 0, 0, 0, op.encoding);
+	if (endsBlock) {
+		ir.Write(IROp::ExitToPC);
+		js.compiling = false;
+		return;
+	}
 	if (setsMode)
 		UpdateRoundingMode();
 	if (isSyscall || setsMode)
@@ -269,9 +301,20 @@ u32 IRFrontend::GetCompilerPC() {
 	return js.compilerPC;
 }
 
-MIPSOpcode IRFrontend::GetOffsetInstruction(int offset) {
-	const u32 addr = GetCompilerPC() + 4 * offset;
+bool IRFrontend::IsMediaEngine() const {
+	return space_ && space_->IsMediaEngine();
+}
+
+// The Media Engine's code runs as it is in memory: replacements and hooks are the main CPU's.
+MIPSOpcode IRFrontend::ReadOp(u32 addr) const {
+	if (IsMediaEngine()) {
+		return space_->IsValid4AlignedAddress(addr) ? MIPSOpcode(space_->ReadUnchecked_U32(addr)) : MIPSOpcode(0);
+	}
 	return Memory::IsValid4AlignedAddress(addr) ? ReadExecutedOp(addr) : Memory::Read_Instruction(addr);
+}
+
+MIPSOpcode IRFrontend::GetOffsetInstruction(int offset) {
+	return ReadOp(GetCompilerPC() + 4 * offset);
 }
 
 void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &mipsBytes) {
@@ -283,7 +326,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 	js.hadBreakpoints = false;
 	js.blockWrotePrefixes = false;
 	js.inDelaySlot = false;
-	js.kernelMode = Memory::IsKernelCodeAddress(em_address);
+	js.kernelMode = IsMediaEngine() || Memory::MayRunInKernelMode(em_address);
 
 	js.PrefixStart();
 	ir.Clear();
@@ -295,7 +338,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 		// Jit breakpoints are quite fast, so let's do them in release too.
 		CheckBreakpoint(GetCompilerPC());
 
-		MIPSOpcode inst = ReadExecutedOp(GetCompilerPC());
+		MIPSOpcode inst = IsMediaEngine() ? ReadOp(GetCompilerPC()) : ReadExecutedOp(GetCompilerPC());
 		js.downcountAmount += MIPSGetInstructionCycleEstimate(inst);
 		MIPSCompileOp(inst, this);
 		js.compilerPC += 4;
@@ -317,6 +360,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 			&RemoveLoadStoreLeftRight,
 			&OptimizeFPMoves,
 			&PropagateConstants,
+			&ResolveKernelMemory,
 			&PurgeTemps,
 			&ReduceVec4Flush,
 			&OptimizeLoadsAfterStores,

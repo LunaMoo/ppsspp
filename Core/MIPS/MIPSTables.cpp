@@ -152,7 +152,7 @@ static const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ........
 	INSTR("sh",  JITFUNC(Comp_ITypeMem), Dis_ITypeMem, Int_ITypeMem, IN_IMM16|IN_RS_ADDR|IN_RT|OUT_MEM|MEMTYPE_HWORD),
 	INSTR("swl", JITFUNC(Comp_ITypeMem), Dis_ITypeMem, Int_ITypeMem, IN_IMM16|IN_RS_ADDR|IN_RT|OUT_MEM|MEMTYPE_WORD),
 	INSTR("sw",  JITFUNC(Comp_ITypeMem), Dis_ITypeMem, Int_ITypeMem, IN_IMM16|IN_RS_ADDR|IN_RT|OUT_MEM|MEMTYPE_WORD),
-	INVALID,
+	INSTR("me2c", JITFUNC(Comp_Generic), Dis_Generic, Int_Me2C, 0),
 	INVALID,
 	INSTR("swr", JITFUNC(Comp_ITypeMem), Dis_ITypeMem, Int_ITypeMem, IN_IMM16|IN_RS_ADDR|IN_RT|OUT_MEM|MEMTYPE_WORD),
 	INSTR("cache", JITFUNC(Comp_Cache), Dis_Cache, Int_Cache, IN_MEM|IN_IMM16|IN_RS_ADDR),
@@ -257,7 +257,7 @@ static const MIPSInstruction tableSpecial[64] = // 000000 ..... ..... ..... ....
 // Theoretically should not hit these.
 static const MIPSInstruction tableSpecial2[64] = // 011100 ..... ..... ..... ..... xxxxxx
 {
-	INSTR("halt", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
+	INSTR("halt", JITFUNC(Comp_Generic), Dis_Generic, Int_Halt, ENDS_BLOCK),
 	INVALID, INVALID, INVALID, INVALID, INVALID, INVALID, INVALID,
 	//8
 	INVALID_X_8,
@@ -378,11 +378,11 @@ static const MIPSInstruction tableCop0[32] = // 010000 xxxxx ..... .............
 	// docs/VSHBootInvestigation.md.
 	INSTR("mfc0", JITFUNC(Comp_Generic), Dis_Generic, Int_Cop0, OUT_RT),
 	INVALID,
-	INVALID,
+	INSTR("cfc0", JITFUNC(Comp_Generic), Dis_Generic, Int_Cop0, OUT_RT),
 	INVALID,
 	INSTR("mtc0", JITFUNC(Comp_Generic), Dis_Generic, Int_Cop0, IN_RT),
 	INVALID,
-	INVALID,
+	INSTR("ctc0", JITFUNC(Comp_Generic), Dis_Generic, Int_Cop0, IN_RT),
 	INVALID,
 	//8
 	INVALID,
@@ -415,7 +415,7 @@ static const MIPSInstruction tableCop0CO[64] = // 010000 1.... ..... ..... .....
 	INVALID, INVALID, INVALID, INVALID, INVALID, INVALID, INVALID,
 	INVALID_X_8,
 	//24
-	INSTR("eret", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
+	INSTR("eret", JITFUNC(Comp_Generic), Dis_Generic, Int_Eret, ENDS_BLOCK),
 	INSTR("iack", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
 	INVALID, INVALID, INVALID, INVALID, INVALID,
 	INSTR("deret", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
@@ -1137,6 +1137,10 @@ static inline IRBlockEnd GetIRBlockEnd(MIPSOpcode op) {
 	case 0x11:  // bc1f, bc1t
 	case 0x12:  // bvf, bvt
 		return ((enc >> 21) & 0x1F) == 8 ? IRBlockEnd::AFTER_DELAY_SLOT : IRBlockEnd::NONE;
+	case 0x10:  // eret (ENDS_BLOCK)
+		return enc == 0x42000018 ? IRBlockEnd::NOW : IRBlockEnd::NONE;
+	case 0x1C:  // halt (ENDS_BLOCK)
+		return (enc & 0x3F) == 0 ? IRBlockEnd::NOW : IRBlockEnd::NONE;
 	default:
 		if ((enc & 0xFF000000) == MIPS_CALL_REPLACEMENT_OP) {
 			// A hook runs the original instruction and goes on, like a disabled replacement.
@@ -1185,6 +1189,18 @@ struct IRBlockState {
 	bool skipNext = false;
 };
 
+// The instruction after the branch at pc, as this CPU sees it. The Media Engine's code can be where
+// the main CPU has no memory.
+static MIPSOpcode ReadDelaySlot(const MIPSState *mips, u32 pc) {
+	if (!mips->IsMediaEngine()) {
+		return Memory::Read_Instruction(pc + 4);
+	}
+	if (!mips->space->IsValid4AlignedAddress(pc + 4)) {
+		return MIPSOpcode(0);
+	}
+	return MIPSOpcode(mips->space->ReadUnchecked_U32(pc + 4));
+}
+
 // After running op from pc, whether the block is over. In a delay slot, the caller runs on anyway.
 static inline bool StepIRBlock(IRBlockState &b, const MIPSState *mips, MIPSOpcode op, u32 pc) {
 	if (b.endAfterNext) {
@@ -1216,7 +1232,7 @@ static inline bool StepIRBlock(IRBlockState &b, const MIPSState *mips, MIPSOpcod
 	}
 
 	const u32 enc = op.encoding;
-	if (((enc >> 26) == 0x14 || (enc >> 26) == 0x15) && (enc & 0xFFFF) == 1 && (Memory::Read_Instruction(pc + 4).encoding & 0xFC00003F) == 0x0D) {
+	if (((enc >> 26) == 0x14 || (enc >> 26) == 0x15) && (enc & 0xFFFF) == 1 && (ReadDelaySlot(mips, pc).encoding & 0xFC00003F) == 0x0D) {
 		// beql/bnel over a break: BranchRSRTComp drops both and goes on.
 		b.numInstructions++;
 		b.skipNext = mips->inDelaySlot;
@@ -1232,7 +1248,7 @@ static inline bool StepIRBlock(IRBlockState &b, const MIPSState *mips, MIPSOpcod
 		return true;
 	}
 	// Not taken: the delay slot runs next, as an ordinary instruction.
-	const MIPSInfo delaySlotInfo = MIPSGetInfo(Memory::Read_Instruction(pc + 4));
+	const MIPSInfo delaySlotInfo = MIPSGetInfo(ReadDelaySlot(mips, pc));
 	if (IR_CONTINUE_BRANCHES && IsContinuableBranch(op) && (delaySlotInfo & (IS_JUMP | IS_CONDBRANCH)) == 0) {
 		b.continueAfterNext = true;
 	} else {
@@ -1250,11 +1266,11 @@ static void RunUntilDowncountZeroFast(MIPSState *mips) {
 		IRBlockState block;
 		while (true) {
 			const u32 pc = mips->pc;
-			if (!Memory::IsValid4AlignedAddress(pc)) {
+			if (!mips->space->IsValid4AlignedAddress(pc)) {
 				Core_ExecException(pc, pc, ExecExceptionType::JUMP);
 				return;
 			}
-			const MIPSOpcode op = ReadExecutedOp(pc);
+			const MIPSOpcode op = ReadExecutedOp(*mips->space, pc);
 
 			const bool wasInDelaySlot = mips->inDelaySlot;
 			const int cycles = ExecInstruction(mips, op);
@@ -1372,8 +1388,8 @@ void MIPSInterpret(MIPSState *mips, MIPSOpcode op) {
 }
 
 // See the declaration comment in MIPSTables.h.
-void CDECL MIPSInterpretTrampoline(MIPSOpcode op) {
-	MIPSInterpret(currentMIPS, op);
+void CDECL MIPSInterpretTrampoline(u32 op, MIPSState *mips) {
+	MIPSInterpret(mips, MIPSOpcode(op));
 }
 
 // This is the slow, feature-rich runloop for the interpreter.
@@ -1390,11 +1406,11 @@ static void RunUntilDowncountZeroWithChecks(MIPSState *mips, u64 globalTicks) {
 		IRBlockState block;
 		while (true) {
 			const u32 pc = mips->pc;
-			if (!Memory::IsValid4AlignedAddress(mips->pc)) {
+			if (!mips->space->IsValid4AlignedAddress(mips->pc)) {
 				Core_ExecException(mips->pc, mips->pc, ExecExceptionType::JUMP);
 				return;
 			}
-			const MIPSOpcode op = ReadExecutedOp(mips->pc);
+			const MIPSOpcode op = ReadExecutedOp(*mips->space, mips->pc);
 			// Replacements are processed here, intentionally.
 			const MIPSInstruction *instr = MIPSGetInstruction(op);
 
@@ -1434,7 +1450,7 @@ static void RunUntilDowncountZeroWithChecks(MIPSState *mips, u64 globalTicks) {
 			}
 		}
 
-		if (CoreTiming::GetTicks(currentMIPS) > globalTicks)
+		if (CoreTiming::GetTicks(mips) > globalTicks)
 			return;
 	}
 }
@@ -1466,6 +1482,12 @@ int MIPSInterpret_RunUntil(MIPSState *mips, u64 globalTicks) {
 	}
 
 	return 1;
+}
+
+void MIPSInterpret_RunDowncount(MIPSState *mips) {
+	ApplyHostRoundingMode(mips);
+	RunUntilDowncountZeroFast(mips);
+	RestoreHostRoundingMode();
 }
 
 const char *MIPSGetName(MIPSOpcode op) {

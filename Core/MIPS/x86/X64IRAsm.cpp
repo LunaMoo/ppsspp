@@ -18,11 +18,13 @@
 #include "ppsspp_config.h"
 #if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
 
+#include "Common/ABI.h"
 #include "Common/Log.h"
 #include "Core/CoreTiming.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/x86/X64IRJit.h"
 #include "Core/MIPS/x86/X64IRRegCache.h"
+#include "Core/MIPS/IR/IRInterpreter.h"
 #include "Core/MIPS/x86/X64VfpuDot.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/MIPS/JitCommon/JitState.h"
@@ -50,6 +52,12 @@ static void ShowPC(void *membase, void *jitbase) {
 }
 
 void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
+	regs_.SetMemoryBase(mipsState->space->base);
+	if (((intptr_t)mipsState->space->base & 0x00000000FFFFFFFFUL) != 0) {
+		jo.enablePointerify = false;
+	}
+	// The Media Engine runs for the slices MeCore::RunFor gives it, and leaves when one runs out.
+	const bool mediaEngine = mipsState->IsMediaEngine();
 	// This will be used as a writable scratch area, always 32-bit accessible.
 	const u8 *start = AlignCodePage();
 	if (DebugProfilerEnabled()) {
@@ -145,12 +153,47 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 		RET();
 	}
 
+#if PPSSPP_ARCH(AMD64)
+	// Guest values live in caller-saved registers too, so these save them all around the call. Blocks
+	// keep the stack aligned for calls, so with the return address and these eight it's off by 8.
+	static_assert((int)IROp::StoreKernel32 - (int)IROp::LoadKernel8 == ARRAY_SIZE(kernelLoadStore_) - 1, "kernel ops in a row");
+	static const X64Reg callerSaved[] = { RCX, RDX, RSI, RDI, R8, R9, R10, R11 };
+	static const int XMM_SAVE_OFFSET = 32;  // After Win64's shadow space.
+	static const int FRAME_SIZE = XMM_SAVE_OFFSET + 16 * 16 + 8;
+	for (int i = 0; i < ARRAY_SIZE(kernelLoadStore_); ++i) {
+		const IROp op = (IROp)((int)IROp::LoadKernel8 + i);
+		const bool isStore = op >= IROp::StoreKernel8;
+		kernelLoadStore_[i] = AlignCode16();
+		for (X64Reg r : callerSaved)
+			PUSH(r);
+		SUB(64, R(RSP), Imm32(FRAME_SIZE));
+		for (int x = 0; x < 16; ++x)
+			MOVUPS(MDisp(RSP, XMM_SAVE_OFFSET + x * 16), (X64Reg)(XMM0 + x));
+		MOV(32, R(ABI_PARAM2), R(SCRATCH1));
+		MOV(64, R(ABI_PARAM1), ImmPtr(mipsState));
+		if (isStore) {
+			MOV(32, R(ABI_PARAM3), MDisp(CTXREG, tempOffset));
+			MOV(32, R(ABI_PARAM4), Imm32((u32)op));
+			ABI_CallFunction((const void *)&IRRunKernelStore);
+		} else {
+			MOV(32, R(ABI_PARAM3), Imm32((u32)op));
+			ABI_CallFunction((const void *)&IRRunKernelLoad);
+		}
+		for (int x = 0; x < 16; ++x)
+			MOVUPS((X64Reg)(XMM0 + x), MDisp(RSP, XMM_SAVE_OFFSET + x * 16));
+		ADD(64, R(RSP), Imm32(FRAME_SIZE));
+		for (int r = ARRAY_SIZE(callerSaved) - 1; r >= 0; --r)
+			POP(callerSaved[r]);
+		RET();
+	}
+#endif
+
 	hooks_.enterDispatcher = (IRNativeFuncNoArg)AlignCode16();
 
 	ABI_PushAllCalleeSavedRegsAndAdjustStack();
 #if PPSSPP_ARCH(AMD64)
 	// Two x64-specific statically allocated registers.
-	MOV(64, R(MEMBASEREG), ImmPtr(Memory::base));
+	MOV(64, R(MEMBASEREG), ImmPtr(mipsState->space->base));
 	if (jitbaseInR15)
 		MOV(64, R(JITBASEREG), ImmPtr((const void *)jitbase));
 #endif
@@ -163,7 +206,10 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 	WriteDebugPC(SCRATCH1);
 	outerLoopPCInSCRATCH1_ = GetCodePtr();
 	MovToPC(SCRATCH1);
+	if (mediaEngine)
+		ApplyRoundingMode(true);
 	outerLoop_ = GetCodePtr();
+	if (!mediaEngine) {
 		// Advance can change the downcount (or thread), so must save/restore around it.
 		SaveStaticRegisters();
 		RestoreRoundingMode(true);
@@ -173,6 +219,7 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 		WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 		ApplyRoundingMode(true);
 		LoadStaticRegisters();
+	}
 
 		dispatcherCheckCoreState_ = GetCodePtr();
 		// TODO: See if we can get the slice decrement to line up with IR.
@@ -190,7 +237,11 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 		} else {
 			CMP(32, MDisp(CTXREG, downcountOffset), Imm8(0));
 		}
-		J_CC(CC_S, outerLoop_);
+		FixupBranch outOfTime;
+		if (mediaEngine)
+			outOfTime = J_CC(CC_S, true);
+		else
+			J_CC(CC_S, outerLoop_);
 		FixupBranch skipToRealDispatch = J();
 
 		dispatcherPCInSCRATCH1_ = GetCodePtr();
@@ -221,7 +272,7 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 					ABI_CallFunctionAC(reinterpret_cast<void *>(&ShowPC), R(MEMBASEREG), (u32)jitbase);
 				}
 #else
-				ABI_CallFunctionCC(reinterpret_cast<void *>(&ShowPC), (u32)Memory::base, (u32)GetBasePtr());
+				ABI_CallFunctionCC(reinterpret_cast<void *>(&ShowPC), (u32)mipsState->space->base, (u32)GetBasePtr());
 #endif
 			}
 
@@ -230,11 +281,11 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 			// Look the block up in the shadow. Its entry is the offset into the code space, or 0 for none.
 			AND(32, R(SCRATCH1), Imm32(Memory::BLOCK_SHADOW_ENTRY_MASK));
 #if PPSSPP_ARCH(X86)
-			_assert_msg_(Memory::blockShadow != 0, "Block shadow bogus");
+			_assert_msg_(mipsState->space->blockShadow != 0, "Block shadow bogus");
 			hooks_.dispatchFetch = GetCodePtr();
-			MOV(32, R(SCRATCH1), MDisp(SCRATCH1, (u32)Memory::blockShadow));
+			MOV(32, R(SCRATCH1), MDisp(SCRATCH1, (u32)mipsState->space->blockShadow));
 #elif PPSSPP_ARCH(AMD64)
-			MOV(64, R(RDX), ImmPtr(Memory::blockShadow));
+			MOV(64, R(RDX), ImmPtr(mipsState->space->blockShadow));
 			hooks_.dispatchFetch = GetCodePtr();
 			MOV(32, R(SCRATCH1), MComplex(RDX, SCRATCH1, SCALE_1, 0));
 #endif
@@ -280,6 +331,8 @@ void X64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 
 	const uint8_t *quitLoop = GetCodePtr();
 	SetJumpTarget(badCoreState);
+	if (mediaEngine)
+		SetJumpTarget(outOfTime);
 
 	WriteDebugProfilerStatus(IRProfilerStatus::NOT_RUNNING);
 	SaveStaticRegisters();

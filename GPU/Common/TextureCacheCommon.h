@@ -194,6 +194,8 @@ struct TexCacheEntry {
 #endif
 	int lastFrame;
 	int lastSyncDomain;
+	// Bytes of host memory the texture takes, set when it's built. See EstimateTexMemoryUsage.
+	u32 hostMemorySize = 0;
 
 	TextureAlpha GetAlphaStatus() const {
 		return (status & TexStatus::ALPHA_SOLID) ? TextureAlpha::Solid : TextureAlpha::Any;
@@ -222,6 +224,8 @@ struct TexCacheEntry {
 	u64 CacheKey() const;
 	static u64 CacheKey(u32 addr, u8 format, u16 dim, u32 cluthash);
 	u32 EstimateTexMemoryUsage() const;
+	// The size of the texture's level 0 at the PSP's size, in 32 bits for the CLUT formats.
+	u32 EstimatePSPSizeMemoryUsage() const;
 };
 
 // TODO: Work on shrinking it further.
@@ -286,7 +290,7 @@ struct BuildTexturePlan {
 	int maxPossibleLevels;
 
 	// Load the 0-mip from this PSP texture level instead of 0.
-	// If non-zero, we are only loading one level.
+	// If non-zero, we are only loading one level. Replacements and dumps still treat it as level 0.
 	int baseLevelSrc;
 
 	// The scale factor of the final texture.
@@ -367,6 +371,9 @@ public:
 
 	virtual void ForgetLastTexture() = 0;
 	virtual void Clear(bool delete_them);
+	// After a savestate load, which may have changed any texture's memory (and destroyed the
+	// framebuffers). Textures are kept, but hashed again before they're used.
+	void RecheckAllAfterLoad();
 	virtual void NotifyConfigChanged();
 
 	// FramebufferManager keeps TextureCache updated about what regions of memory are being rendered to,
@@ -502,6 +509,7 @@ protected:
 	CLUTProperties clutProperties_;
 
 	// Facilities for GPU depal of static textures.
+	void ReleaseDynamicClut();
 	Draw::Framebuffer *dynamicClutTemp_ = nullptr;
 	Draw::Framebuffer *dynamicClutFbo_ = nullptr;
 

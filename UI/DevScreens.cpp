@@ -78,7 +78,7 @@
 #include "UI/EmuScreen.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/ControlMappingScreen.h"
-#include "UI/DeveloperToolsScreen.h"
+#include "UI/GameSettingsScreen.h"
 #include "UI/JitCompareScreen.h"
 #include "android/jni/app-android.h"
 
@@ -173,7 +173,9 @@ void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 
 	items->Add(new Choice(sy->T("Developer Tools")))->OnClick.Add([this](UI::EventParams &e) {
 		UpdateUIState(UISTATE_PAUSEMENU);
-		screenManager()->push(new DeveloperToolsScreen(gamePath_));
+		GameSettingsScreen *settings = new GameSettingsScreen(gamePath_);
+		settings->OpenDeveloperTools();
+		screenManager()->push(settings);
 	});
 
 	// Debug overlay
@@ -456,11 +458,11 @@ void JitDebugScreen::CreateViews() {
 	topbar->Add(new Choice(di->T("Enable All")))->OnClick.Handle(this, &JitDebugScreen::OnEnableAll);
 
 	vert->Add(topbar);
-	vert->Add(new ItemHeader(dev->T("Disabled JIT functionality")));
+	ChoiceGroup *disabledFlags = vert->Add(new ChoiceGroupList())->Add(new ChoiceGroup(dev->T("Disabled JIT functionality")));
 
 	for (auto flag : jitDisableFlags) {
 		// Do not add translation of these.
-		vert->Add(new BitCheckBox(&g_Config.uJitDisableFlags, (uint32_t)flag.flag, flag.name));
+		disabledFlags->Add(new BitCheckBox(&g_Config.uJitDisableFlags, (uint32_t)flag.flag, flag.name));
 	}
 }
 
@@ -638,12 +640,12 @@ void FrameDumpTestScreen::CreateTabs() {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	AddTab("General", dev->T("Dumps"), [this](UI::LinearLayout *parent) {
-		parent->Add(new ItemHeader("GE Frame Dumps"));
+	AddTab("General", di->T("Dumps"), [this](UI::LinearLayout *parent) {
+		ChoiceGroup *dumps = parent->Add(new ChoiceGroupList())->Add(new ChoiceGroup("GE Frame Dumps"));
 
 		for (auto &file : files_) {
 			std::string url = framedumpsBaseUrl + file;
-			Choice *c = parent->Add(new Choice(file));
+			Choice *c = dumps->Add(new Choice(file));
 			c->SetTag(url);
 			c->OnClick.Add([this, url = Path(url)](UI::EventParams &e) {
 				INFO_LOG(Log::Common, "Trying to launch '%s'", url.c_str());

@@ -53,18 +53,18 @@ void FirmwareScreen::CreateContentViews(UI::ViewGroup *parent) {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto st = GetI18NCategory(I18NCat::STORE);  // Borrow "Size" from here, like GameScreen does.
 
-	LinearLayout *content = parent->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
+	ChoiceGroupList *list = parent->Add(new ChoiceGroupList());
 
 	if (!info_.anythingInstalled) {
-		content->Add(new NoticeView(NoticeLevel::INFO, sy->T("No firmware installed"),
+		list->Add(new NoticeView(NoticeLevel::INFO, sy->T("No firmware installed"),
 			sy->T("FirmwareSources", "PPSSPP has its own replacements for the PSP's system files, so a firmware is optional. Installing one gets you the real fonts, and lets you launch the XMB. Most game discs carry a firmware updater - open a game's info screen to install from it.")));
-		content->Add(new TextWithImage(ImageID("I_FOLDER"), GetFriendlyPath(nandRoot_)));
+		list->Add(new TextWithImage(ImageID("I_FOLDER"), GetFriendlyPath(nandRoot_)));
 		return;
 	}
 
 	if (!info_.version.empty()) {
 		std::string versionLine = std::string(sy->T("Firmware version")) + ": " + info_.version;
-		content->Add(new TextView(versionLine, ALIGN_LEFT, false))->SetBig(true);
+		list->Add(new TextView(versionLine, ALIGN_LEFT, false))->SetBig(true);
 		if (!info_.buildDate.empty() || !info_.target.empty()) {
 			std::string details = info_.buildDate;
 			if (!info_.target.empty()) {
@@ -73,12 +73,12 @@ void FirmwareScreen::CreateContentViews(UI::ViewGroup *parent) {
 				}
 				details += info_.target;
 			}
-			content->Add(new TextView(details, ALIGN_LEFT, false));
+			list->Add(new TextView(details, ALIGN_LEFT, false));
 		}
 	} else {
 		// No flash0:/vsh/etc/version.txt, so this isn't a full firmware - most likely just the
 		// fonts, which is what installing from a running game's disc leaves behind.
-		content->Add(new NoticeView(NoticeLevel::INFO, sy->T("Partial firmware installed"),
+		list->Add(new NoticeView(NoticeLevel::INFO, sy->T("Partial firmware installed"),
 			sy->T("Some system files are present, but not a complete firmware")));
 	}
 
@@ -86,7 +86,7 @@ void FirmwareScreen::CreateContentViews(UI::ViewGroup *parent) {
 	// off a game's disc, and rows reading "Kernel modules: 0 / XMB: No" say nothing useful.
 	const bool fullFirmware = info_.kernelModuleCount > 0;
 
-	content->Add(new ItemHeader(sy->T("Contents")));
+	ChoiceGroup *content = list->Add(new ChoiceGroup(sy->T("Contents")));
 	content->Add(new InfoItem(sy->T("Fonts"), info_.fontCount));
 	if (fullFirmware) {
 		content->Add(new InfoItem(sy->T("Kernel modules"), info_.kernelModuleCount));
@@ -98,9 +98,6 @@ void FirmwareScreen::CreateContentViews(UI::ViewGroup *parent) {
 		content->Add(new InfoItem(sy->T("Files"), info_.fileCount));
 	}
 	content->Add(new InfoItem(st->T("Size"), NiceSizeFormat(info_.totalSize)));
-
-	content->Add(new ItemHeader(iz->T("Install into folder")));
-	content->Add(new TextView(GetFriendlyPath(nandRoot_), ALIGN_LEFT | FLAG_WRAP_TEXT, false));
 }
 
 void FirmwareScreen::CreateSettingsViews(UI::ViewGroup *parent) {
@@ -113,30 +110,35 @@ void FirmwareScreen::CreateSettingsViews(UI::ViewGroup *parent) {
 	// that has flash0 mounted is worse - so while a game is running, this screen is read-only.
 	const bool gameRunning = PSP_IsInited();
 
-	Choice *launch = parent->Add(new Choice(sy->T("Launch XMB"), ImageID("I_PLAY")));
+	ChoiceGroupList *groups = parent->Add(new ChoiceGroupList());
+	if (info_.hasVsh && !FirmwareVersionSupportsVSH(info_.version)) {
+		groups->Add(new NoticeView(NoticeLevel::WARN, sy->T("XMB unsupported"),
+			sy->T("XMBUnsupportedVersion", "Only firmware 6.61 can boot the XMB so far")));
+	}
+
+	ChoiceGroup *launchGroup = groups->Add(new ChoiceGroup());
+	Choice *launch = launchGroup->Add(new Choice(sy->T("Launch XMB"), ImageID("I_PLAY")));
+
+	ChoiceGroup *settings = groups->Add(new ChoiceGroup());
+	settings->Add(new CheckBox(&g_Config.bAutoUpgradeFirmware, sy->T("Install or upgrade firmware from game discs"),
+		sy->T("AutoUpgradeFirmwareDesc", "Most game discs carry a firmware updater. Install it when there's no firmware yet, or when the disc's is newer.")));
+
+	ChoiceGroup *actions = groups->Add(new ChoiceGroup());
 	launch->OnClick.Add([this](UI::EventParams &) {
 		LaunchVSH();
 	});
 	launch->SetEnabled(!gameRunning && info_.hasVsh && FirmwareVersionSupportsVSH(info_.version));
 
-	if (info_.hasVsh && !FirmwareVersionSupportsVSH(info_.version)) {
-		parent->Add(new NoticeView(NoticeLevel::WARN, sy->T("XMB unsupported"),
-			sy->T("XMBUnsupportedVersion", "Only firmware 6.61 can boot the XMB so far")));
-	}
-
 	if (System_GetPropertyBool(SYSPROP_HAS_FILE_BROWSER)) {
-		Choice *install = parent->Add(new Choice(iz->T("Install PSP firmware update"), ImageID("I_FOLDER_UPLOAD")));
+		Choice *install = actions->Add(new Choice(iz->T("Install PSP firmware update"), ImageID("I_FOLDER_UPLOAD")));
 		install->OnClick.Add([this](UI::EventParams &) {
 			BrowseForUpdater();
 		});
 		install->SetEnabled(!gameRunning);
 	}
 
-	parent->Add(new CheckBox(&g_Config.bAutoUpgradeFirmware, sy->T("Install or upgrade firmware from game discs"),
-		sy->T("AutoUpgradeFirmwareDesc", "Most game discs carry a firmware updater. Install it when there's no firmware yet, or when the disc's is newer.")));
-
 	if (info_.anythingInstalled) {
-		Choice *erase = parent->Add(new Choice(sy->T("Uninstall firmware"), ImageID("I_TRASHCAN")));
+		Choice *erase = actions->Add(new Choice(sy->T("Uninstall firmware"), ImageID("I_TRASHCAN")));
 		erase->OnClick.Add([this](UI::EventParams &) {
 			AskToErase();
 		});
@@ -144,13 +146,21 @@ void FirmwareScreen::CreateSettingsViews(UI::ViewGroup *parent) {
 	}
 
 	if (System_GetPropertyBool(SYSPROP_HAS_OPEN_DIRECTORY)) {
-		parent->Add(new Choice(sy->T("Show firmware folder")))->OnClick.Add([this](UI::EventParams &) {
+		actions->Add(new Choice(sy->T("Show firmware folder")))->OnClick.Add([this](UI::EventParams &) {
 			System_LaunchUrl(LaunchUrlType::LOCAL_FOLDER, nandRoot_.ToString());
 		});
 	}
 
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+
+	Choice *moreInfo = groups->Add(new ChoiceGroup())->Add(new Choice(di->T("More info")));
+	moreInfo->OnClick.Add([](UI::EventParams &) {
+		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/docs/getting-started/how-to-run-the-vsh/");
+	});
+	moreInfo->SetIconRight(ImageID("I_LINK_OUT"));
+
 	if (gameRunning) {
-		parent->Add(new NoticeView(NoticeLevel::INFO,
+		groups->Add(new NoticeView(NoticeLevel::INFO,
 			sy->T("FirmwareNeedsNoGame", "Stop the game to change the installed firmware"), ""));
 	}
 }

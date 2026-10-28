@@ -456,7 +456,7 @@ void Core_RunLoopUntil(u64 globalticks) {
 
 			case DLResult::Error: // We should elegantly report the error somehow, or I guess ignore it.
 			case DLResult::Done: // Done executing for now
-				hleFinishSyscallAfterGe();
+				hleFinishSyscallAfterGe(&mipsr4k);
 				coreState = preGeCoreState;
 				break;
 
@@ -653,7 +653,10 @@ static bool Core_ProcessStepping(MIPSDebugInterface *cpu) {
 // Free-threaded (hm, possibly except tracing).
 void Core_Break(BreakReason reason, u32 relatedAddress, const BreakpointHit *hit) {
 	const CoreState state = coreState;
-	if (state != CORE_RUNNING_CPU) {
+	// REENTER_DISPATCH is still running, with a request to bounce out of the dispatcher (set by any
+	// JIT block invalidation, such as loading a module). Stepping supersedes it, so a memory
+	// exception in that window must break like any other instead of being dropped.
+	if (state != CORE_RUNNING_CPU && state != CORE_REENTER_DISPATCH) {
 		if (state == CORE_STEPPING_CPU) {
 			// Already stepping.
 			INFO_LOG(Log::CPU, "Core_Break(%s), already in break mode", BreakReasonToString(reason));

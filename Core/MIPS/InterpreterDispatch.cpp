@@ -144,9 +144,11 @@ int ExecInstruction(MIPSState *mips, MIPSOpcode op) {
     case 16:
     {
         switch ((op.encoding >> 21) & 0x1f) {
-        // mfc0, mtc0, rdpgpr, mfmc0, wrpgpr
+        // mfc0, cfc0, mtc0, ctc0, rdpgpr, mfmc0, wrpgpr
         case 0:
+        case 2:
         case 4:
+        case 6:
         case 10:
         case 11:
         case 14:
@@ -169,7 +171,14 @@ int ExecInstruction(MIPSState *mips, MIPSOpcode op) {
         case 30:
         case 31:
         {
-            return -1;
+            switch ((op.encoding >> 0) & 0x3f) {
+            // eret
+            case 24:
+                MIPSInt::Int_Eret(mips, op);
+                return 1;
+            default:
+                return -1;
+            }
         }
         default:
             return -1;
@@ -382,6 +391,10 @@ int ExecInstruction(MIPSState *mips, MIPSOpcode op) {
     case 28:
     {
         switch ((op.encoding >> 0) & 0x3f) {
+        // halt
+        case 0:
+            MIPSInt::Int_Halt(mips, op);
+            return 1;
         // mfic, mtic
         case 36:
         case 38:
@@ -466,6 +479,10 @@ int ExecInstruction(MIPSState *mips, MIPSOpcode op) {
     case 43:
     case 46:
         MIPSInt::Int_ITypeMem(mips, op);
+        return 1;
+    // me2c
+    case 44:
+        MIPSInt::Int_Me2C(mips, op);
         return 1;
     // cache
     case 47:

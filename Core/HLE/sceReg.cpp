@@ -8,6 +8,8 @@
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeMap.h"
 #include "Common/StringUtils.h"
+#include "Core/Config.h"
+#include "Core/System.h"
 
 #define SYSTEM_REGISTRY "/system"
 #define REG_KEYNAME_SIZE 27
@@ -58,7 +60,15 @@ struct KeyValue {
 	const char *strValue;  // also can be used for bin. Note: can't be std::string/string_view, will cut off the length.
 	int intValue;
 	const KeyValue *dirContents;  // intValue is the count.
+	// If set, an INT key reads this setting (as 0 or 1), even after the guest writes it: the VSH
+	// rewrites every key with its default at each boot, since category_version is below its schema.
+	bool (*boolSetting)() = nullptr;
 };
+
+static bool UmdAutoboot() {
+	// Forced on when a UMD Video disc picked from the game list boots the XMB.
+	return PSP_CoreParameter().umdAutoboot.value_or(g_Config.bVshUmdAutoboot);
+}
 
 // Guest-written registry values (sceRegCreateKey / sceRegSetKeyValue), keyed by category path
 // (no leading slash, e.g. "DATA/FONT") then key name. The static dump above is read-only, but
@@ -70,6 +80,16 @@ struct OverlayValue {
 	std::string str;  // STR/BIN payload
 	int intValue = 0;
 	bool isDir = false;
+
+	void DoState(PointerWrap &p) {
+		auto s = p.Section("RegOverlayValue", 1);
+		if (!s)
+			return;
+		Do(p, type);
+		Do(p, str);
+		Do(p, intValue);
+		Do(p, isDir);
+	}
 };
 static std::map<std::string, std::map<std::string, OverlayValue>> g_overlay;
 
@@ -754,7 +774,7 @@ static const KeyValue tree_CONFIG_SYSTEM_CHARACTER_SET[] = {
 static const KeyValue tree_CONFIG_SYSTEM[] = {
 	{ "owner_name", ValueType::STR, "P939", 5 },
 	{ "backlight_brightness", ValueType::INT, "", (int)0x3 },  // decimal: 3
-	{ "umd_autoboot", ValueType::INT, "", (int)0x1 },  // decimal: 1
+	{ "umd_autoboot", ValueType::INT, "", (int)0x1, nullptr, &UmdAutoboot },  // decimal: 1
 	{ "usb_charge", ValueType::INT, "", (int)0x1 },  // decimal: 1
 	{ "umd_cache", ValueType::INT, "", (int)0x1 },  // decimal: 1
 	{ "usb_auto_connect", ValueType::INT, "", (int)0x1 },  // decimal: 1
@@ -1080,6 +1100,12 @@ static const MergedCategory &GetMergedCategory(const std::string &path) {
 		}
 	}
 
+	for (auto &kv : merged.keyvals) {
+		if (kv.boolSetting) {
+			kv.intValue = kv.boolSetting() ? 1 : 0;
+		}
+	}
+
 	return merged;
 }
 
@@ -1118,10 +1144,13 @@ static const KeyValue *LookupCategory(std::string_view path, int *count) {
 }
 
 void __RegDoState(PointerWrap &p) {
-	auto s = p.Section("sceReg", 0, 3);
+	auto s = p.Section("sceReg", 0, 4);
 	if (!s) {
 		if (p.mode == PointerWrap::MODE_READ) {
+			// Like below, older states keep the values written this session.
+			std::map<std::string, std::map<std::string, OverlayValue>> overlay = std::move(g_overlay);
 			__RegInit();
+			g_overlay = std::move(overlay);
 		}
 		return;
 	}
@@ -1141,6 +1170,14 @@ void __RegDoState(PointerWrap &p) {
 		if (!g_openCategories.empty()) {
 			g_handleGen = std::max(g_handleGen, g_openCategories.rbegin()->first + 1);
 		}
+	}
+	// Values the game (or a plugin, like CLANNAD's chfont.prx) wrote. Older states keep the current
+	// session's, most likely written by the same plugin at boot.
+	if (s >= 4) {
+		Do(p, g_overlay);
+	}
+	if (p.mode == PointerWrap::MODE_READ) {
+		InvalidateMergedCache();
 	}
 }
 
@@ -1237,8 +1274,9 @@ int sceRegRemoveCategory(int regHandle, const char *name) {
 	return hleLogError(Log::sceReg, 0, "UNIMPL");
 }
 
+// Not very interesting, called after writes.
 int sceRegFlushCategory(int regHandle) {
-	return hleLogError(Log::sceReg, 0, "UNIMPL");
+	return hleLogDebug(Log::sceReg, 0, "UNIMPL");
 }
 
 // Key level

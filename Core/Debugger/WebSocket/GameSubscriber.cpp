@@ -40,6 +40,7 @@
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/HLE/sceDisplay.h"
+#include "Core/HLE/sceUmd.h"
 #include "Core/RetroAchievements.h"
 #include "Core/SaveState.h"
 #include "Core/System.h"
@@ -95,6 +96,9 @@ private:
 //
 // Parameters:
 //  - path: string, path to the .ppst file (only for load and save).
+//  - slot: number, a savestate slot of the running game, from 0, instead of path. Slots work like the
+//    save and load keys: a slot save keeps the slot's previous state as its undo, and a slot load
+//    keeps the state it replaces for load undo (if state undo is enabled).
 //  - wait: optional boolean, respond when the operation has finished rather than when queued.
 //
 // Response (same event name) once queued, or an error if the network or achievements hardcore
@@ -106,8 +110,16 @@ void WebSocketGameState::StateOperation(DebuggerRequest &req, StateOp op) {
 	const char *event = events[(int)op];
 	std::string path;
 	bool wait = false;
-	if ((op == StateOp::LOAD || op == StateOp::SAVE) && !req.ParamString("path", &path))
+	uint32_t slot = 0;
+	const bool useSlot = (op == StateOp::LOAD || op == StateOp::SAVE) && req.HasParam("slot");
+	if (useSlot) {
+		if (!req.ParamU32("slot", &slot))
+			return;
+		if (slot >= (uint32_t)g_Config.iSaveStateSlotCount)
+			return req.Fail("Invalid slot");
+	} else if ((op == StateOp::LOAD || op == StateOp::SAVE) && !req.ParamString("path", &path)) {
 		return;
+	}
 	if (!req.ParamBool("wait", &wait, DebuggerParamType::OPTIONAL))
 		return;
 
@@ -139,10 +151,21 @@ void WebSocketGameState::StateOperation(DebuggerRequest &req, StateOp op) {
 		}
 		switch (op) {
 		case StateOp::LOAD:
-			queued = SaveState::Load(Path(path), -1, callback);
+			if (useSlot) {
+				// Refusals go to the callback.
+				SaveState::LoadSlot(SaveState::GetGamePrefix(g_paramSFO), (int)slot, callback);
+				queued = true;
+			} else {
+				queued = SaveState::Load(Path(path), -1, callback);
+			}
 			break;
 		case StateOp::SAVE:
-			queued = SaveState::Save(Path(path), -1, callback);
+			if (useSlot) {
+				SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), (int)slot, callback);
+				queued = true;
+			} else {
+				queued = SaveState::Save(Path(path), -1, callback);
+			}
 			break;
 		case StateOp::REWIND:
 			canRewind = SaveState::CanRewind();
@@ -223,6 +246,8 @@ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
 	map["game.state.verify"] = [p](DebuggerRequest &req) { p->StateOperation(req, StateOp::VERIFY); };
 	map["game.speed.get"] = &WebSocketGameSpeedGet;
 	map["game.speed.set"] = &WebSocketGameSpeedSet;
+	map["game.umd.insert"] = &WebSocketGameUmdInsert;
+	map["game.umd.eject"] = &WebSocketGameUmdEject;
 	map["version"] = &WebSocketVersion;
 
 	return p;
@@ -445,4 +470,53 @@ void WebSocketVersion(DebuggerRequest &req) {
 		json.writeNull("path");
 	else
 		json.writeString("path", path);
+}
+
+// Put a disc in the drive (game.umd.insert)
+//
+// For the XMB, booted with --vsh and no game, whose drive starts out empty. The shell gets the
+// drive's callback, as on a PSP. To swap discs in a running game, use the Switch UMD menu.
+//
+// Parameters:
+//  - path: string, the disc image (ISO, CSO, ...) or extracted disc directory to insert.
+//
+// Response (same event name) with no extra data, or error if a disc is already in the drive or the
+// image can't be mounted.
+void WebSocketGameUmdInsert(DebuggerRequest &req) {
+	std::string path;
+	if (!req.ParamString("path", &path))
+		return;
+
+	bool running = false;
+	bool inserted = false;
+	std::string error;
+	Core_RunOnCPUThread([&] {
+		running = PSP_GetBootState() == BootState::Complete;
+		if (running)
+			inserted = __UmdInsert(Path(path), &error);
+	});
+
+	if (!running)
+		return req.Fail("Game not running");
+	if (!inserted)
+		return req.Fail("Couldn't insert the disc: " + error);
+	req.Respond();
+}
+
+// Take the disc out of the drive (game.umd.eject)
+//
+// No parameters.
+//
+// Response (same event name) with no extra data. Ejecting an empty drive does nothing.
+void WebSocketGameUmdEject(DebuggerRequest &req) {
+	bool running = false;
+	Core_RunOnCPUThread([&] {
+		running = PSP_GetBootState() == BootState::Complete;
+		if (running)
+			__UmdEject();
+	});
+
+	if (!running)
+		return req.Fail("Game not running");
+	req.Respond();
 }

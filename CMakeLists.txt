@@ -79,11 +79,6 @@ if(CMAKE_SYSTEM_PROCESSOR)
 	endif()
 endif()
 
-# the libraries in the ffmpeg/ directory are not compatible with mingw
-if(MINGW AND NOT USE_SYSTEM_FFMPEG AND NOT BUILD_BUNDLED_FFMPEG)
-	set(USE_SYSTEM_FFMPEG ON)
-endif()
-
 if(NOT ANDROID AND NOT IOS)
 	if(ARM_DEVICE OR SIMULATOR)
 		set(USING_EGL ON)
@@ -198,7 +193,6 @@ option(USE_DISCORD "Build with Discord support" ON)
 option(USE_MINIUPNPC "Build with miniUPnPc support" ON)
 option(USE_SYSTEM_SNAPPY "Dynamically link against system snappy" ${USE_SYSTEM_SNAPPY})
 option(USE_SYSTEM_FFMPEG "Dynamically link against system FFMPEG" ${USE_SYSTEM_FFMPEG})
-option(BUILD_BUNDLED_FFMPEG "Build bundled ffmpeg module" ${BUILD_BUNDLED_FFMPEG})
 option(USE_SYSTEM_FREETYPE "Dynamically link against system freetype" ${USE_SYSTEM_FREETYPE})
 option(USE_SYSTEM_LIBCHDR "Dynamically link against system libchdr" ${USE_SYSTEM_LIBCHDR})
 option(USE_SYSTEM_LIBZIP "Dynamically link against system libzip" ${USE_SYSTEM_LIBZIP})
@@ -224,6 +218,17 @@ endif()
 
 if(USE_SYSTEM_MINIUPNPC)
 	add_compile_definitions(USE_SYSTEM_MINIUPNPC)
+endif()
+
+# FFmpeg is built from the sources in ext/ffmpeg (see its README.md), unless the system's or one in
+# FFMPEG_DIR is asked for.
+if(USE_FFMPEG AND NOT USE_SYSTEM_FFMPEG AND NOT FFMPEG_DIR)
+	set(BUILD_BUNDLED_FFMPEG ON)
+	# First on the include path, ahead of any other FFmpeg's headers that come along with another
+	# library's include directory (Homebrew's, for one).
+	include_directories(BEFORE ext/ffmpeg)
+else()
+	set(BUILD_BUNDLED_FFMPEG OFF)
 endif()
 
 if(WEBOS)
@@ -607,90 +612,30 @@ if(USING_GLES2 OR (USING_EGL AND NOT USING_FBDEV))
 	find_package(X11)
 endif()
 
-if(USE_FFMPEG)
-	if(NOT BUILD_BUNDLED_FFMPEG)
-		if(NOT FFMPEG_DIR)
-			if(NOT USE_SYSTEM_FFMPEG)
-				if(ANDROID)
-					if(ARMV7)
-						set(PLATFORM_ARCH "android/armv7")
-					elseif(ARM64)
-						set(PLATFORM_ARCH "android/arm64")
-					elseif(X86_64)
-						set(PLATFORM_ARCH "android/x86_64")
-					elseif(X86)
-						set(PLATFORM_ARCH "android/x86")
-					endif()
-				elseif(IOS)
-					if(IOS_PLATFORM STREQUAL "TVOS")
-						set(PLATFORM_ARCH "tvos/arm64")
-					else()
-						set(PLATFORM_ARCH "ios/universal")
-					endif()
-				elseif(MACOSX)
-					set(PLATFORM_ARCH "macosx/universal")
-				elseif(LINUX)
-					if(ARMV7)
-						set(PLATFORM_ARCH "linux/armv7")
-					elseif(ARM64)
-						set(PLATFORM_ARCH "linux/aarch64")
-					elseif(ARM)
-						set(PLATFORM_ARCH "linux/arm")
-					elseif(MIPS)
-						set(PLATFORM_ARCH "linux/mips32")
-					elseif(RISCV64)
-						set(PLATFORM_ARCH "linux/riscv64")
-					elseif(LOONGARCH64)
-						set(PLATFORM_ARCH "linux/loongarch64")
-					elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
-						set(PLATFORM_ARCH "linux/x86_64")
-					elseif(X86)
-						set(PLATFORM_ARCH "linux/x86")
-					endif()
-				elseif(WIN32)
-					if(X86_64)
-						set(PLATFORM_ARCH "Windows/x86_64")
-					elseif(X86)
-						set(PLATFORM_ARCH "Windows/x86")
-					endif()
-				endif()
-				if(WEBOS AND ARMV7)
-					set(PLATFORM_ARCH "linux/webos")
-				endif()
-				if(PLATFORM_ARCH)
-					set(FFMPEG_DIR "ffmpeg/${PLATFORM_ARCH}")
-				else()
-					message("Couldn't find an internal FFmpeg build, using system FFmpeg instead")
-				endif()
-			endif()
-		endif()
-	
-		find_package(FFmpeg REQUIRED avcodec avformat avutil swresample swscale)
-		# Check if we need to use avcodec_(alloc|free)_frame instead of av_frame_(alloc|free)
-		# Check if we need to use const AVCodec
-		set(CMAKE_REQUIRED_INCLUDES ${FFmpeg_INCLUDE_avcodec};${FFmpeg_INCLUDE_avformat})
-		set(CMAKE_REQUIRED_LIBRARIES FFmpeg::avcodec;FFmpeg::avformat)
-		set(CMAKE_REQUIRED_FLAGS "-pedantic -Wall -Werror -Wno-unused-variable")
-		check_cxx_source_compiles("extern \"C\" {
-			#include <libavcodec/avcodec.h>
-			#include <libavformat/avformat.h>
-			}
-			static AVCodecContext *s_codec_context = NULL;
-			int main() {
-				const AVCodec *codec = avcodec_find_encoder(s_codec_context->codec_id);
-				return 0;
-			}
-			" HAVE_LIBAVCODEC_CONST_AVCODEC FAIL_REGEX "invalid conversion")
-	
-		# Check if we need to use avcodec_alloc_context3 instead of stream->codec
-		# Check if we need to use av_frame_get_buffer instead of avcodec_default_get_buffer
-	endif()
-	if(BUILD_BUNDLED_FFMPEG)
-		set(CMAKE_REQUIRED_FLAGS "-pedantic -Wall -Werror -Wno-unused-variable")
-	endif()
-endif(USE_FFMPEG)
+if(USE_FFMPEG AND NOT BUILD_BUNDLED_FFMPEG)
+	find_package(FFmpeg REQUIRED avcodec avformat avutil swscale)
+	# Check if we need to use avcodec_(alloc|free)_frame instead of av_frame_(alloc|free)
+	# Check if we need to use const AVCodec
+	set(CMAKE_REQUIRED_INCLUDES ${FFmpeg_INCLUDE_avcodec};${FFmpeg_INCLUDE_avformat})
+	set(CMAKE_REQUIRED_LIBRARIES FFmpeg::avcodec;FFmpeg::avformat)
+	set(CMAKE_REQUIRED_FLAGS "-pedantic -Wall -Werror -Wno-unused-variable")
+	check_cxx_source_compiles("extern \"C\" {
+		#include <libavcodec/avcodec.h>
+		#include <libavformat/avformat.h>
+		}
+		static AVCodecContext *s_codec_context = NULL;
+		int main() {
+			const AVCodec *codec = avcodec_find_encoder(s_codec_context->codec_id);
+			return 0;
+		}
+		" HAVE_LIBAVCODEC_CONST_AVCODEC FAIL_REGEX "invalid conversion")
 
-find_package(ZLIB)
+	# Check if we need to use avcodec_alloc_context3 instead of stream->codec
+	# Check if we need to use av_frame_get_buffer instead of avcodec_default_get_buffer
+endif()
+
+# 1.2.9 for uncompress2 (Core/Util/PSARUnpack.cpp). Older system zlibs (Ubuntu 16.04's) get the bundled one.
+find_package(ZLIB 1.2.9)
 if(ZLIB_FOUND AND NOT ANDROID)
 	include_directories(${ZLIB_INCLUDE_DIR})
 	add_compile_definitions(SHARED_ZLIB)
@@ -960,6 +905,8 @@ elseif(IOS AND NOT LIBRETRO)
 		ios/AppDelegate.h
 		ios/SceneDelegate.mm
 		ios/SceneDelegate.h
+		ios/ExternalDisplaySceneDelegate.mm
+		ios/ExternalDisplaySceneDelegate.h
 		ios/Controls.h
 		ios/Controls.mm
 		ios/ViewController.h
@@ -1003,6 +950,7 @@ elseif(IOS AND NOT LIBRETRO)
 	# TODO: Enable arc globally?
 	set_source_files_properties(ios/AppDelegate.mm
 		ios/SceneDelegate.mm
+		ios/ExternalDisplaySceneDelegate.mm
 		ios/ViewController.mm
 		ios/iOSCoreAudio.mm
 		ios/IAPManager.mm
@@ -1423,6 +1371,7 @@ if(UNITTEST)
 		unittest/TestVFS.cpp
 		unittest/TestZipSlip.cpp
 		unittest/TestZArchive.cpp
+		unittest/TestPS1Eboot.cpp
 		unittest/TestLzrc.cpp
 		unittest/TestCwCheat.cpp
 		unittest/TestMpegCsc.cpp
@@ -1628,9 +1577,13 @@ if(IOS AND NOT LIBRETRO)
 	#endif()
 
 	# Can't figure out properly using .xcframework from CMake, so just linking directly to the .a file.
-	target_link_libraries(${TargetBin}
-		"${CMAKE_CURRENT_SOURCE_DIR}/ios/MoltenVK/MoltenVK.xcframework/${MOLTENVK_SLICE}/libMoltenVK.a"
-	)
+	# The simulator renders with Metal only, and loads no Vulkan (see PPSSPP_VK_STATIC).
+	if(IOS_PLATFORM STREQUAL "SIMULATOR")
+		set(MOLTENVK_LIB "")
+	else()
+		set(MOLTENVK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/ios/MoltenVK/MoltenVK.xcframework/${MOLTENVK_SLICE}/libMoltenVK.a")
+	endif()
+	target_link_libraries(${TargetBin} ${MOLTENVK_LIB})
 
 	set(MACOSX_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET})
 	set(PRODUCT_NAME "PPSSPP")
@@ -1716,7 +1669,7 @@ if(IOS AND NOT LIBRETRO)
 	if(IOS_APP_STORE)
 		# https://stackoverflow.com/questions/40664125/cmake-and-code-signing-in-xcode-8-for-ios-projects
 		set_target_properties(${TargetBin} PROPERTIES
-			XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ${DEVELOPMENT_TEAM_ID}
+			XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${DEVELOPMENT_TEAM_ID}"
 			XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
 			XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
 		)
@@ -1735,7 +1688,7 @@ if(IOS AND NOT LIBRETRO)
 		# PPSSPPHeadless as an app of its own (org.ppsspp.headless), for running frame dumps on a
 		# device. Signed for development, so devicectl can copy files in and out of its container.
 		target_link_libraries(PPSSPPHeadless
-			"${CMAKE_CURRENT_SOURCE_DIR}/ios/MoltenVK/MoltenVK.xcframework/${MOLTENVK_SLICE}/libMoltenVK.a"
+			${MOLTENVK_LIB}
 			"-framework Foundation -framework UIKit -framework CoreGraphics -framework CoreText -framework QuartzCore -framework Metal -framework IOSurface -framework AudioToolbox -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework UniformTypeIdentifiers"
 		)
 		if(NOT ICONV_LIBRARY)

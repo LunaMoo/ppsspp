@@ -67,11 +67,13 @@
 #include "Core/HLE/sceKernelModule.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceKernelInterrupt.h"
+#include "Core/HLE/PopsBoot.h"
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceMpeg.h"
 #include "Core/HLE/scePsmf.h"
 #include "Core/HLE/sceAtrac.h"
 #include "Core/HLE/sceIo.h"
+#include "Core/HLE/sceUmd.h"
 #include "Core/HLE/KernelWaitHelpers.h"
 #include "Core/ELF/ParamSFO.h"
 
@@ -151,6 +153,9 @@ static void UnexportFuncSymbol(const FuncSymbolExport &func);
 // Custom-firmware "SystemControl" (SystemCtrlForKernel) start-module handler, registered by
 // Chinese-patch loaders (see sctrlHENSetStartModuleHandler below).
 static u32 g_startModuleHandler = 0;
+
+// LoadCore's control block, for sceKernelQueryLoadCoreCB. Made on first use.
+static u32 g_loadCoreCB = 0;
 
 static bool KernelImportModuleFuncs(PSPModule *module, u32 *firstImportStubAddr, bool reimporting = false);
 
@@ -239,7 +244,7 @@ u32 PSPModule::GetMissingErrorCode() {
 }
 
 void PSPModule::DoState(PointerWrap &p) {
-	auto s = p.Section("Module", 1, 6);
+	auto s = p.Section("Module", 1, 7);
 	if (!s)
 		return;
 
@@ -284,6 +289,14 @@ void PSPModule::DoState(PointerWrap &p) {
 
 	if (s >= 5) {
 		Do(p, modulePtr.ptr);
+	}
+	if (s >= 7) {
+		// LoadExec's thread waits for plugins (and VSH modules) to start, with no timeout.
+		Do(p, pluginWaitingThread);
+		Do(p, startingPlugins);
+	} else if (p.mode == p.MODE_READ) {
+		pluginWaitingThread = 0;
+		startingPlugins.clear();
 	}
 
 	ModuleWaitingThread mwt = { 0 };
@@ -492,9 +505,49 @@ struct SceKernelSMOption {
 static int actionAfterModule;
 
 static std::set<SceUID> loadedModules;
+
+u32 KernelFindModuleExport(const char *libraryName, u32 nid) {
+	u32 error;
+	for (SceUID moduleId : loadedModules) {
+		PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
+		if (!module) {
+			continue;
+		}
+		for (const FuncSymbolExport &func : module->exportedFuncs) {
+			if (func.nid == nid && !strncmp(func.moduleName, libraryName, KERNELOBJECT_MAX_NAME_LENGTH)) {
+				return func.symAddr;
+			}
+		}
+	}
+	return 0;
+}
+
+u32 KernelFindModuleImport(const char *moduleName, const char *libraryName, u32 nid) {
+	u32 error;
+	for (SceUID moduleId : loadedModules) {
+		PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
+		if (!module || strcmp(module->GetName(), moduleName) != 0) {
+			continue;
+		}
+		for (const FuncSymbolImport &func : module->importedFuncs) {
+			if (func.nid == nid && !strncmp(func.moduleName, libraryName, KERNELOBJECT_MAX_NAME_LENGTH)) {
+				return func.stubAddr;
+			}
+		}
+	}
+	return 0;
+}
+
 // Set once we've seen a PSP_MODULE_VSH_MODE module load (i.e. we're booting the VSH rather
 // than a game), and reset on the next __KernelLoadExec. See ShouldHLEModuleForLoad below.
 static bool g_runningVSH = false;
+// What the XMB passed as vshmain args when it launched the running game, to hand back on exit.
+// Survives the kernel reset that LoadExec does, so it isn't cleared with the rest of this file's state.
+static std::vector<u8> g_vshmainArgs;
+
+bool __KernelIsRunningVSH() {
+	return g_runningVSH;
+}
 
 // A sceKernelLoadModule whose caller is waiting for the file to be read. The module is only put
 // in memory when the wait ends - see sceKernelLoadModule.
@@ -534,8 +587,28 @@ static void __KernelModuleInit() {
 	eventModuleLoadDone = CoreTiming::RegisterEvent("LoadModuleDone", &__KernelLoadModuleDone);
 }
 
+// Set for the next load by the savestate code: code the load left as it was.
+static std::vector<std::pair<u32, u32>> g_unchangedCodeOnLoad;
+
+void __KernelModuleSetUnchangedCodeOnLoad(std::vector<std::pair<u32, u32>> unchanged) {
+	g_unchangedCodeOnLoad = std::move(unchanged);
+}
+
+std::vector<std::pair<u32, u32>> __KernelModuleCodeRanges() {
+	std::vector<std::pair<u32, u32>> ranges;
+	u32 error;
+	for (SceUID moduleId : loadedModules) {
+		const PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
+		// textEnd is the last instruction.
+		if (module && !module->isFake && module->textStart != 0 && module->textEnd >= module->textStart) {
+			ranges.emplace_back(module->textStart, module->textEnd + 4 - module->textStart);
+		}
+	}
+	return ranges;
+}
+
 void __KernelModuleDoState(PointerWrap &p) {
-	auto s = p.Section("sceKernelModule", 1, 5);
+	auto s = p.Section("sceKernelModule", 1, 7);
 	if (!s)
 		return;
 
@@ -576,6 +649,20 @@ void __KernelModuleDoState(PointerWrap &p) {
 	}
 	CoreTiming::RestoreRegisterEvent(eventModuleLoadDone, "LoadModuleDone", &__KernelLoadModuleDone);
 
+	if (s >= 6) {
+		Do(p, g_vshModulesToStart);
+		Do(p, g_vshModuleStarting);
+	} else if (p.mode == p.MODE_READ) {
+		g_vshModulesToStart.clear();
+		g_vshModuleStarting = 0;
+	}
+
+	if (s >= 7) {
+		Do(p, g_loadCoreCB);
+	} else if (p.mode == p.MODE_READ) {
+		g_loadCoreCB = 0;
+	}
+
 	if (p.mode == p.MODE_READ) {
 		u32 error;
 		// We process these late, since they depend on loadedModules for interlinking.
@@ -602,7 +689,9 @@ void __KernelModuleDoState(PointerWrap &p) {
 		}
 		// The functions were found in memory from before the load, where other code may have been
 		// (an overlay module, say.) Hash them from what's there now, so a hook only goes where it matches.
-		MIPSAnalyst::RehashFunctions();
+		// Only what the load may have changed: hashing it all again takes milliseconds.
+		MIPSAnalyst::RehashFunctions(g_unchangedCodeOnLoad);
+		g_unchangedCodeOnLoad.clear();
 		if (g_Config.bFuncReplacements) {
 			MIPSAnalyst::ReplaceFunctions();
 		}
@@ -614,6 +703,7 @@ void __KernelModuleShutdown() {
 	g_pendingModuleLoads.clear();
 	g_vshModulesToStart.clear();
 	g_vshModuleStarting = 0;
+	g_loadCoreCB = 0;
 	MIPSAnalyst::Reset();
 	HLEPlugins::Unload();
 }
@@ -1815,6 +1905,10 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 	if ((module->nm.attribute & PSP_MODULE_VSH_MODE) != 0 || equals(modinfo->name, "vsh_module")) {
 		g_runningVSH = true;
 		INFO_LOG(Log::sceModule, "VSH mode module detected: %s", modinfo->name);
+		// The shell booted without a game: its drive starts out empty, for a disc to go in later.
+		if (!pspFileSystem.GetSystem("disc0:")) {
+			__UmdEject();
+		}
 	}
 
 	// OK, even if it's an ELF module, it might be one we shouldn't fully load and execute!
@@ -2002,8 +2096,16 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 	module->nm.stub_top = modinfo->libstub;
 	module->nm.stub_size = modinfo->libstubend - modinfo->libstub;
 
-	const u32_le *entPos = (u32_le *)Memory::GetPointerOrException(modinfo->libent);
-	const u32_le *entEnd = (u32_le *)Memory::GetPointerOrException(modinfo->libentend);
+	const u32_le *entPos = nullptr;
+	const u32_le *entEnd = nullptr;
+	// A module that wasn't relocated (cut off before its relocations, see LoadInto) still has
+	// link-time addresses here.
+	if (Memory::IsValidRange(modinfo->libent, modinfo->libentend - modinfo->libent)) {
+		entPos = (const u32_le *)Memory::GetPointerUnchecked(modinfo->libent);
+		entEnd = (const u32_le *)Memory::GetPointerUnchecked(modinfo->libentend);
+	} else {
+		WARN_LOG(Log::Loader, "Garbage libent address %08x or end %08x, no exports", modinfo->libent, modinfo->libentend);
+	}
 
 	for (int m = 0; entPos < entEnd; ++m) {
 		const PspLibEntEntry *ent = (const PspLibEntEntry *)entPos;
@@ -2175,6 +2277,16 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		if (!strcmp(modinfo->name, "sceATRAC3plus_Library")) {
 			__AtracNotifyLoadModule(modinfo->moduleVersion, module->crc, module->GetBSSAddr(), module->nm.bss_size);
 		}
+	}
+
+	if (PopsBootActive() && !strcmp(modinfo->name, "pops")) {
+		u32 decodeStub = 0;
+		for (const FuncSymbolImport &func : module->importedFuncs) {
+			if (func.nid == 0x0090B2C8 && !strncmp(func.moduleName, "scePopsMan", KERNELOBJECT_MAX_NAME_LENGTH)) {
+				decodeStub = func.stubAddr;
+			}
+		}
+		__PopsBootPatchEmulator(module->nm.text_addr, module->nm.text_size, decodeStub);
 	}
 
 	System_Notify(SystemNotification::SYMBOL_MAP_UPDATED);
@@ -2362,7 +2474,7 @@ void __KernelLoadReset() {
 // Shared by __KernelLoadExec (loading from a file) and __KernelLoadExecFromBuffer (loading
 // from a buffer already in RAM, as used by the VSH's USB/WLAN game-push feature) - everything
 // past the point where we have the executable's bytes in hand.
-static bool __KernelLoadExecFromPtr(MIPSState * mips, const u8 *data, size_t size, const char *filename, u32 paramPtr, std::string *error_string) {
+static bool __KernelLoadExecFromPtr(MIPSState * mips, const u8 *data, size_t size, const char *filename, u32 paramPtr, std::string *error_string, const std::vector<u8> *hostArgs = nullptr) {
 	SceKernelLoadExecParam param{};
 
 	auto paramData = PSPPointer<SceKernelLoadExecParam>::Create(paramPtr);
@@ -2373,7 +2485,11 @@ static bool __KernelLoadExecFromPtr(MIPSState * mips, const u8 *data, size_t siz
 
 	u8 *param_argp = nullptr;
 	u8 *param_key = nullptr;
-	if (param.args > 0) {
+	if (hostArgs) {
+		param.args = (u32)hostArgs->size();
+		param_argp = new u8[param.args];
+		memcpy(param_argp, hostArgs->data(), param.args);
+	} else if (param.args > 0) {
 		u32 argpAddr = param.argp;
 		param_argp = new u8[param.args];
 		Memory::Memcpy(param_argp, argpAddr, param.args, "KernelLoadParam");
@@ -2438,7 +2554,7 @@ static bool __KernelLoadExecFromPtr(MIPSState * mips, const u8 *data, size_t siz
 	}
 
 	INFO_LOG(Log::System, "Starting modules...");
-	if (paramPtr)
+	if (paramPtr || hostArgs)
 		__KernelStartModule(module, param.args, (const char*)param_argp, &option);
 	else
 		__KernelStartModule(module, (u32)strlen(filename) + 1, filename, &option);
@@ -2463,7 +2579,7 @@ static bool __KernelLoadExecFromPtr(MIPSState * mips, const u8 *data, size_t siz
 	return true;
 }
 
-bool __KernelLoadExec(MIPSState *mips, const char *filename, u32 paramPtr, std::string *error_string) {
+bool __KernelLoadExec(MIPSState *mips, const char *filename, u32 paramPtr, std::string *error_string, const std::vector<u8> *hostArgs) {
 	std::vector<uint8_t> fileData;
 	if (pspFileSystem.ReadEntireFile(filename, fileData) < 0) {
 		ERROR_LOG(Log::Loader, "Failed to load executable %s - file doesn't exist", filename);
@@ -2472,7 +2588,7 @@ bool __KernelLoadExec(MIPSState *mips, const char *filename, u32 paramPtr, std::
 		return false;
 	}
 
-	return __KernelLoadExecFromPtr(mips, fileData.data(), fileData.size(), filename, paramPtr, error_string);
+	return __KernelLoadExecFromPtr(mips, fileData.data(), fileData.size(), filename, paramPtr, error_string, hostArgs);
 }
 
 bool __KernelLoadExecFromBuffer(MIPSState *mips, const u8 *data, size_t size, u32 paramPtr, std::string *error_string) {
@@ -2502,16 +2618,16 @@ bool __KernelLoadGEDump(MIPSState *mips, std::string_view base_filename, std::st
 	return true;
 }
 
-int __KernelGPUReplay() {
+int __KernelGPUReplay(MIPSState *mips) {
 	// Special ABI: s0 and s1 are the "args".  Not null terminated.
-	const char *filenamep = Memory::GetCharPointer(currentMIPS->r[MIPS_REG_S1]);
+	const char *filenamep = Memory::GetCharPointer(mips->r[MIPS_REG_S1]);
 	if (!filenamep) {
 		ERROR_LOG(Log::G3D, "__KernelGPUReplay: Failed to load dump filename");
 		Core_Stop();
 		return 0;
 	}
 
-	std::string filename(filenamep, currentMIPS->r[MIPS_REG_S0]);
+	std::string filename(filenamep, mips->r[MIPS_REG_S0]);
 	GPURecord::ReplayResult result = GPURecord::RunMountedReplay(filename);
 
 	if (result == GPURecord::ReplayResult::Error) {
@@ -2533,7 +2649,52 @@ int __KernelGPUReplay() {
 	return hleNoLog(result == GPURecord::ReplayResult::Break ? 1 : 0);
 }
 
-int sceKernelLoadExec(const char *filename, u32 paramPtr) {
+// The XMB starting a disc game or something on the memory stick. Rather than swapping it in under
+// the XMB's session, the frontend boots it like it boots anything, so it gets its PARAM.SFO, compat
+// flags, game config, window title and so on. False for anything else, which loads in place.
+static bool RebootFromVSHInto(const std::string &filename) {
+	// Some discs (the EUR Video Demo Disc) list a game whose executables are all zeroes. Loaded in
+	// place, that fails back to the XMB.
+	const auto isExecutable = [](const char *path) {
+		u8 head[4]{};
+		const int fd = pspFileSystem.OpenFile(path, FILEACCESS_READ);
+		if (fd < 0) {
+			return false;
+		}
+		const size_t read = pspFileSystem.ReadFile(fd, head, sizeof(head));
+		pspFileSystem.CloseFile(fd);
+		return read == sizeof(head) && (memcmp(head, "~PSP", 4) == 0 || memcmp(head, "\x7F" "ELF", 4) == 0);
+	};
+
+	const Path disc = __UmdGetPath();
+	Path hostPath;
+	if (filename == "disc0:/PSP_GAME/SYSDIR/EBOOT.BIN" || filename == "disc0:/PSP_GAME/SYSDIR/BOOT.BIN") {
+		if (isExecutable("disc0:/PSP_GAME/SYSDIR/EBOOT.BIN") || isExecutable("disc0:/PSP_GAME/SYSDIR/BOOT.BIN")) {
+			hostPath = disc;
+		}
+	} else if (startsWith(filename, "ms0:/PSP/GAME") && endsWithNoCase(filename, "/EBOOT.PBP")) {
+		hostPath = GetSysDirectory(DIRECTORY_MEMSTICK_ROOT) / filename.substr(strlen("ms0:/"));
+		if (!File::Exists(hostPath)) {
+			WARN_LOG(Log::sceModule, "No %s for %s, starting it in place", hostPath.c_str(), filename.c_str());
+			return false;
+		}
+	}
+	if (hostPath.empty()) {
+		return false;
+	}
+
+	BootRequest request;
+	request.fileToStart = hostPath;
+	// Homebrew keeps the disc that's in the drive.
+	if (hostPath != disc) {
+		request.mountIso = disc;
+	}
+	request.launchedFromVSH = VSHLaunch{ PSP_CoreParameter().fileToStart, g_vshmainArgs };
+	PSP_RequestBoot(request);
+	return true;
+}
+
+int sceKernelLoadExec(MIPSState *mips, const char *filename, u32 paramPtr) {
 	std::string exec_filename = filename;
 	PSPFileInfo info = pspFileSystem.GetFileInfo(exec_filename);
 
@@ -2558,8 +2719,27 @@ int sceKernelLoadExec(const char *filename, u32 paramPtr) {
 	}
 
 	DEBUG_LOG(Log::sceModule, "sceKernelLoadExec(name=%s,...): loading %s", filename, exec_filename.c_str());
+	if (g_runningVSH) {
+		// The XMB launching something: keep its vshmain args for when it comes back.
+		g_vshmainArgs.clear();
+		auto vshParam = PSPPointer<SceKernelLoadExecVSHParam>::Create(paramPtr);
+		if (vshParam.IsValid() && vshParam->size >= offsetof(SceKernelLoadExecVSHParam, vshmainArgs) + 4 &&
+			vshParam->vshmainArgsSize != 0 && Memory::IsValidRange(vshParam->vshmainArgs, vshParam->vshmainArgsSize)) {
+			const u8 *args = Memory::GetPointerUnchecked(vshParam->vshmainArgs);
+			g_vshmainArgs.assign(args, args + vshParam->vshmainArgsSize);
+		}
+		INFO_LOG(Log::sceModule, "Keeping %d bytes of vshmain args", (int)g_vshmainArgs.size());
+		if (RebootFromVSHInto(exec_filename)) {
+			__KernelSwitchOffThread("XMB started a game");
+			return hleLogInfo(Log::sceModule, 0, "rebooting into it");
+		}
+	}
 	std::string error_string;
-	if (!__KernelLoadExec(currentMIPS, exec_filename.c_str(), paramPtr, &error_string)) {
+	if (!__KernelLoadExec(mips, exec_filename.c_str(), paramPtr, &error_string)) {
+		// The old program is gone by now. A game the XMB couldn't start goes back to the XMB.
+		if (__KernelExitToVSH(mips)) {
+			return hleLogError(Log::sceModule, 0, "failed: %s, back to the VSH", error_string.c_str());
+		}
 		Core_HLEError("sceKernelLoadExec failed: " + error_string);
 		return hleLogError(Log::sceModule, -1, "failed: %s", error_string.c_str());;
 	}
@@ -2567,6 +2747,94 @@ int sceKernelLoadExec(const char *filename, u32 paramPtr) {
 		gpu->Reinitialize();
 	}
 	return hleLogDebug(Log::sceModule, 0);
+}
+
+// The XMB's args from when it launched a game tell it that it's coming back (and not to auto-start
+// the disc in the drive, say). vshmain's module_start only takes them (copying them into its state)
+// when they're 0x20 or 0x400 bytes and start with that size and then 0x20, which it doesn't write
+// itself.
+static std::vector<u8> VshmainReturnArgs(const std::vector<u8> &launchArgs) {
+	std::vector<u8> args = launchArgs;
+	if (args.size() >= 8) {
+		u32 header[2] = { (u32)args.size(), 0x20 };
+		memcpy(args.data(), header, sizeof(header));
+	}
+	return args;
+}
+
+// For a game the XMB booted, or loaded in place under its own session: the boot that takes it back
+// to the XMB. False otherwise (or for the XMB itself, or the PS1 emulator, which has its own HOME menu
+// with its own way out).
+static bool GetExitToVSHRequest(BootRequest *request) {
+	if (g_runningVSH || PopsBootActive()) {
+		return false;
+	}
+	const std::optional<VSHLaunch> &launchedFromVSH = PSP_CoreParameter().launchedFromVSH;
+	if (launchedFromVSH) {
+		request->fileToStart = launchedFromVSH->vshmain;
+		request->vshmainArgs = VshmainReturnArgs(launchedFromVSH->vshmainArgs);
+	} else if (PSP_CoreParameter().fileToStart.GetFilename() == "vshmain.prx") {
+		// Loaded in place: the XMB's own boot file is what we started from.
+		request->fileToStart = PSP_CoreParameter().fileToStart;
+		request->vshmainArgs = VshmainReturnArgs(g_vshmainArgs);
+	} else {
+		return false;
+	}
+	request->mountIso = __UmdGetPath();
+	return true;
+}
+
+bool __KernelCanExitToVSH() {
+	BootRequest request;
+	return GetExitToVSHRequest(&request);
+}
+
+bool __KernelRequestExitToVSH() {
+	BootRequest request;
+	if (!GetExitToVSHRequest(&request)) {
+		return false;
+	}
+	INFO_LOG(Log::sceModule, "Quitting the game: back to the XMB");
+	// Stops the core; the frontend then boots the XMB like anything else.
+	PSP_RequestBoot(request);
+	return true;
+}
+
+bool __KernelExitToVSH(MIPSState *mips) {
+	// Normally the XMB launched this game by booting it, so it boots the XMB again.
+	const std::optional<VSHLaunch> &launchedFromVSH = PSP_CoreParameter().launchedFromVSH;
+	if (launchedFromVSH) {
+		BootRequest request;
+		request.fileToStart = launchedFromVSH->vshmain;
+		request.mountIso = __UmdGetPath();
+		request.vshmainArgs = VshmainReturnArgs(launchedFromVSH->vshmainArgs);
+		PSP_RequestBoot(request);
+		__KernelSwitchOffThread("back to the XMB");
+		return true;
+	}
+
+	// Otherwise it's something the XMB loaded in place, under its own session. The XMB itself
+	// exiting (power off) still ends the session.
+	if (PSP_CoreParameter().fileToStart.GetFilename() != "vshmain.prx" || g_runningVSH) {
+		return false;
+	}
+	std::string error_string;
+	const char *vshmain = "flash0:/vsh/module/vshmain.prx";
+	std::vector<uint8_t> fileData;
+	if (pspFileSystem.ReadEntireFile(vshmain, fileData) < 0) {
+		ERROR_LOG(Log::sceModule, "Couldn't return to the VSH: no %s", vshmain);
+		return false;
+	}
+	std::vector<u8> args = VshmainReturnArgs(g_vshmainArgs);
+	INFO_LOG(Log::sceModule, "Back to the VSH with %d bytes of vshmain args", (int)args.size());
+	if (!__KernelLoadExecFromPtr(mips, fileData.data(), fileData.size(), vshmain, 0, &error_string, args.empty() ? nullptr : &args)) {
+		ERROR_LOG(Log::sceModule, "Couldn't return to the VSH: %s", error_string.c_str());
+		return false;
+	}
+	if (gpu) {
+		gpu->Reinitialize();
+	}
+	return true;
 }
 
 static u32 KernelLoadModuleFromData(const char *name, std::vector<uint8_t> &fileData, u32 flags, const SceKernelLMOption *lmoption, bool *tryLoadExec, const u8 *secureId = nullptr, const u32 *fuseId = nullptr);
@@ -2656,7 +2924,7 @@ static u32 KernelLoadModuleFromData(const char *name, std::vector<uint8_t> &file
 	return module->GetUID();
 }
 
-u32 sceKernelLoadModule(const char *name, u32 flags, u32 optionAddr) {
+u32 sceKernelLoadModule(MIPSState *mips, const char *name, u32 flags, u32 optionAddr) {
 	if (!name) {
 		return hleLogError(Log::Loader, SCE_KERNEL_ERROR_ILLEGAL_ADDR, "bad filename");
 	}
@@ -2761,7 +3029,7 @@ u32 sceKernelLoadModule(const char *name, u32 flags, u32 optionAddr) {
 		if (gpu) {
 			gpu->Reinitialize();
 		}
-		return __KernelLoadExec(currentMIPS, safeName.c_str(), 0, &error_string);
+		return __KernelLoadExec(mips, safeName.c_str(), 0, &error_string);
 	}
 	return hleDelayResult(hleNoLog(result), "module loaded", loadUs);
 }
@@ -2789,10 +3057,10 @@ static void __KernelLoadModuleDone(u64 userdata, int cyclesLate) {
 	__KernelReSchedule("module loaded");
 }
 
-static u32 sceKernelLoadModuleNpDrm(const char *name, u32 flags, u32 optionAddr) {
+static u32 sceKernelLoadModuleNpDrm(MIPSState *mips, const char *name, u32 flags, u32 optionAddr) {
 	// Just forward it, same parameters so the logging will make sense. The NPDRM EDAT wrapper these
 	// modules carry is stepped over in there, since that's keyed off the file's own magic.
-	return sceKernelLoadModule(name, flags, optionAddr);
+	return sceKernelLoadModule(mips, name, flags, optionAddr);
 }
 
 // The only thread attributes a SceKernelSMOption may carry (VFPU, SCRATCH_SRAM and 0x00F00000).
@@ -2882,6 +3150,24 @@ static u32 sctrlHENSetStartModuleHandler(u32 handlerAddr) {
 // a driver by name; since no real driver patching is done, always report it as found.
 static u32 sctrlHENFindDriver(const char *drvname) {
 	return hleLogInfo(Log::sceModule, 0, "driver %s", drvname ? drvname : "(null)");
+}
+
+// The custom firmware's lookup of a loaded module's export, by module and library name (either may
+// be left out) and NID. Only modules loaded as code have exports to find.
+static u32 sctrlHENFindFunction(const char *moduleName, const char *libraryName, u32 nid) {
+	u32 error;
+	for (SceUID moduleId : loadedModules) {
+		PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
+		if (!module || (moduleName && strcmp(module->GetName(), moduleName) != 0)) {
+			continue;
+		}
+		for (const FuncSymbolExport &func : module->exportedFuncs) {
+			if (func.nid == nid && (!libraryName || strcmp(func.moduleName, libraryName) == 0)) {
+				return hleLogDebug(Log::sceModule, func.symAddr);
+			}
+		}
+	}
+	return hleLogWarning(Log::sceModule, 0, "not found");
 }
 
 int __KernelStartModule(SceUID moduleId, u32 argsize, u32 argAddr, u32 returnValueAddr, SceKernelSMOption *smoption, bool *needsWait) {
@@ -3151,10 +3437,10 @@ static u32 sceKernelStopUnloadSelfModuleWithStatus(u32 exitCode, u32 argSize, u3
 	return __KernelStopUnloadSelfModuleWithOrWithoutStatus(exitCode, argSize, argp, statusAddr, optionAddr, true);
 }
 
-void __KernelReturnFromModuleFunc() {
+void __KernelReturnFromModuleFunc(MIPSState *mips) {
 	// Return from the thread as normal.
 	hleSkipDeadbeef();
-	__KernelReturnFromThread();
+	__KernelReturnFromThread(mips);
 
 	SceUID leftModuleID = __KernelGetCurThreadModuleId();
 	SceUID leftThreadID = __KernelGetCurThread();
@@ -3187,7 +3473,7 @@ void __KernelReturnFromModuleFunc() {
 		{
 			if (module->nm.status == MODULE_STATUS_UNLOADING) {
 				// TODO: Maybe should maintain the exitCode?
-				hleCall(ThreadManForKernel, int, sceKernelTerminateDeleteThread, it->threadID);
+				hleCall(ThreadManForKernel, int, sceKernelTerminateDeleteThread, mips, it->threadID);
 			} else {
 				if (it->statusPtr != 0)
 					Memory::WriteOrException_U32(exitStatus, it->statusPtr);
@@ -3302,6 +3588,21 @@ u32 sceKernelFindModuleByUID(u32 uid)
 		return hleLogError(Log::sceModule, 0, "Module Not Found or Fake");
 	}
 	return hleLogInfo(Log::sceModule, module->modulePtr.ptr);
+}
+
+// The firmware's semawm.prx walks the first 0x200 bytes, the registered libraries' 128 hash buckets,
+// for libraries a custom firmware adds (decrypted from semawm 6.61, run by PMP Mod and psp-me-bench).
+// We don't keep LoadCore's structures, so every bucket is empty.
+u32 sceKernelQueryLoadCoreCB() {
+	if (!g_loadCoreCB) {
+		u32 size = 0x400;
+		const u32 addr = kernelMemory.Alloc(size, false, "LoadCoreCB");
+		if (addr == (u32)-1)
+			return hleLogError(Log::sceModule, 0, "out of kernel memory");
+		Memory::Memset(addr, 0, size, "LoadCoreCB");
+		g_loadCoreCB = addr;
+	}
+	return hleLogInfo(Log::sceModule, g_loadCoreCB);
 }
 
 u32 sceKernelFindModuleByName(const char *name)
@@ -3537,14 +3838,21 @@ static u32 sceKernelQueryModuleInfo(u32 uid, u32 infoAddr)
 
 static u32 sceKernelGetModuleIdList(u32 resultBuffer, u32 resultBufferSize, u32 idCountAddr)
 {
-	ERROR_LOG(Log::sceModule, "UNTESTED sceKernelGetModuleIdList(%08x, %i, %08x)", resultBuffer, resultBufferSize, idCountAddr);
-	
+	// pspautotests modules/idlist: the size is in bytes, a partial entry at the end still gets
+	// written, and the count covers every module whether it fit or not.
+	if (resultBuffer == 0 || (int)resultBufferSize < 0) {
+		return hleLogError(Log::sceModule, SCE_KERNEL_ERROR_ILLEGAL_ADDR, "bad buffer");
+	}
+
 	int idCount = 0;
 	u32 resultBufferOffset = 0;
 
 	u32 error;
 	for (SceUID moduleId : loadedModules) {
 		PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
+		if (!module) {
+			continue;
+		}
 		if (!module->isFake || liedAboutThisModule(module)) {
 			if (resultBufferOffset < resultBufferSize) {
 				Memory::WriteOrException_U32(module->GetUID(), resultBuffer + resultBufferOffset);
@@ -3555,8 +3863,7 @@ static u32 sceKernelGetModuleIdList(u32 resultBuffer, u32 resultBufferSize, u32 
 	}
 
 	Memory::WriteOrException_U32(idCount, idCountAddr);
-	
-	return hleNoLog(0);
+	return hleLogDebug(Log::sceModule, 0);
 }
 
 bool DescribeModuleAddress(u32 address, char *buffer, size_t bufferSize) {
@@ -3592,8 +3899,8 @@ bool DescribeModuleAddress(u32 address, char *buffer, size_t bufferSize) {
 }
 
 //fix for tiger x dragon
-static u32 sceKernelLoadModuleForLoadExecVSHDisc(const char *name, u32 flags, u32 optionAddr) {
-	return sceKernelLoadModule(name, flags, optionAddr);
+static u32 sceKernelLoadModuleForLoadExecVSHDisc(MIPSState *mips, const char *name, u32 flags, u32 optionAddr) {
+	return sceKernelLoadModule(mips, name, flags, optionAddr);
 }
 
 // How the VSH loads its own plugins - the XMB's UI lives in flash0:/vsh/module/*_plugin.prx and
@@ -3604,8 +3911,8 @@ static u32 sceKernelLoadModuleForLoadExecVSHDisc(const char *name, u32 flags, u3
 //
 // The apitype the name refers to only affects what the loaded module may itself do; loading is
 // otherwise the ordinary path, same as sceKernelLoadModuleForLoadExecVSHDisc above.
-static u32 sceKernelLoadModuleVSH(const char *name, u32 flags, u32 optionAddr) {
-	return sceKernelLoadModule(name, flags, optionAddr);
+static u32 sceKernelLoadModuleVSH(MIPSState *mips, const char *name, u32 flags, u32 optionAddr) {
+	return sceKernelLoadModule(mips, name, flags, optionAddr);
 }
 
 // Looks up an already-loaded module by the name in its module info, returning its uid.
@@ -3665,6 +3972,10 @@ const HLEFunction ModuleMgrForKernel[] = {
 	{0x329C89DB, &WrapU_CUU<sceKernelLoadModuleVSH>,                    "sceKernelLoadModuleVSH",                  'x', "sxx",   HLE_KERNEL_SYSCALL },
 	{0x8909A807, &WrapU_CUU<sceKernelLoadModuleVSH>,                    "sceKernelLoadModuleVSH",                  'x', "sxx",   HLE_KERNEL_SYSCALL },
 	{0xBDFEEC4F, &WrapU_CUU<sceKernelLoadModuleVSH>,                    "sceKernelLoadModuleVSH",                  'x', "sxx",   HLE_KERNEL_SYSCALL },
+	// 6.60 NIDs.
+	{0x939E4270, &WrapU_CUU<sceKernelLoadModule>,                       "sceKernelLoadModuleForKernel",            'x', "sxx",   HLE_KERNEL_SYSCALL },
+	{0x3FF74DF1, &WrapU_UUUUU<sceKernelStartModule>,                    "sceKernelStartModule",                    'v', "xxxxx", HLE_NOT_IN_INTERRUPT | HLE_NOT_DISPATCH_SUSPENDED | HLE_KERNEL_SYSCALL },
+	{0x387E3CA9, &WrapU_U<sceKernelUnloadModule>,                       "sceKernelUnloadModule",                   'x', "x" ,    HLE_KERNEL_SYSCALL },
 };
 
 void Register_ModuleMgrForUser() {
@@ -3678,8 +3989,17 @@ void Register_ModuleMgrForKernel() {
 static const HLEFunction SystemCtrlForKernel[] = {
 	{0x1C90BECB, &WrapU_U<sctrlHENSetStartModuleHandler>, "sctrlHENSetStartModuleHandler", 'x', "x", HLE_KERNEL_SYSCALL},
 	{0x78E46415, &WrapU_C<sctrlHENFindDriver>,            "sctrlHENFindDriver",              'x', "s", HLE_KERNEL_SYSCALL},
+	{0x159AF5CC, &WrapU_CCU<sctrlHENFindFunction>,        "sctrlHENFindFunction",            'x', "ssx", HLE_KERNEL_SYSCALL},
+};
+
+static const HLEFunction SystemCtrlForUser[] = {
+	{0x159AF5CC, &WrapU_CCU<sctrlHENFindFunction>,        "sctrlHENFindFunction",            'x', "ssx"},
 };
 
 void Register_SystemCtrlForKernel() {
 	RegisterHLEModule("SystemCtrlForKernel", ARRAY_SIZE(SystemCtrlForKernel), SystemCtrlForKernel);
+}
+
+void Register_SystemCtrlForUser() {
+	RegisterHLEModule("SystemCtrlForUser", ARRAY_SIZE(SystemCtrlForUser), SystemCtrlForUser);
 }

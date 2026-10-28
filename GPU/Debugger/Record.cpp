@@ -32,6 +32,7 @@
 #include "Common/StringUtils.h"
 #include "Common/System/System.h"
 
+#include "Core/Compatibility.h"
 #include "Core/Core.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/HLE/sceDisplay.h"
@@ -216,7 +217,10 @@ Path Recorder::WriteRecording() {
 	Header header{};
 	memcpy(header.magic, HEADER_MAGIC, sizeof(header.magic));
 	header.version = VERSION;
-	strncpy(header.gameID, g_paramSFO.GetDiscID().c_str(), sizeof(header.gameID));
+	// A replay looks compat.ini up by this ID, so a PS1 game's dump gets the PS1 emulator's settings. The file
+	// name keeps the game's own.
+	const std::string gameID = PSP_CoreParameter().fileType == IdentifiedFileType::PSP_PS1_PBP ? POPS_COMPAT_ID : g_paramSFO.GetDiscID();
+	strncpy(header.gameID, gameID.c_str(), sizeof(header.gameID));
 	fwrite(&header, sizeof(header), 1, fp);
 
 	u32 sz = (u32)commands.size();
@@ -527,10 +531,19 @@ void Recorder::FlushPrimState(int vcount) {
 		}
 	}
 
-	const void *verts = Memory::GetPointerOrException(gstate_c.vertexAddr);
+	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
+		ERROR_LOG(Log::G3D, "Recorder: Invalid vertex address: 0x%08X", gstate_c.vertexAddr);
+		return;
+	}
+
+	const void *verts = Memory::GetPointerUnchecked(gstate_c.vertexAddr);
 	const void *indices = nullptr;
 	if ((gstate.vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
-		indices = Memory::GetPointerOrException(gstate_c.indexAddr);
+		if (Memory::IsValidAddress(gstate_c.indexAddr)) {
+			ERROR_LOG(Log::G3D, "Recorder: Invalid index address: 0x%08X", gstate_c.indexAddr);
+			return;
+		}
+		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 	}
 
 	u32 ibytes = 0;
@@ -693,6 +706,22 @@ bool Recorder::RecordNextFrame(const std::function<void(const Path &)> callback)
 	writeCallback = callback;
 	nextFrame = true;
 	return true;
+}
+
+void Recorder::RestartAfterLoad() {
+	if (!active) {
+		return;
+	}
+	NOTICE_LOG(Log::System, "Savestate loaded, restarting the recording");
+	commands.clear();
+	pushbuf.clear();
+	lastVRAM.clear();
+	lastEdramTrans = 0x400;
+	flipLastAction = gpuStats.totals.numFlips;
+	flipFinishAt = -1;
+	std::lock_guard<std::mutex> guard(callbackLock_);
+	active = false;
+	nextFrame = true;
 }
 
 void Recorder::FinishRecording() {

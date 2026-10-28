@@ -55,12 +55,14 @@
 #include "Core/CmdLine.h"
 #include "Common/Net/HTTPRequest.h"
 #include "Core/Config.h"
+#include "Core/Instance.h"
 #include "Core/ConfigValues.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
 #include "Core/EmuThread.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/__sceAudio.h"
+#include "Core/HLE/sceCtrl.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/System.h"
 #include "Core/Util/PSARUnpack.h"
@@ -68,6 +70,7 @@
 #include "headless/ReverseEngineer.h"
 #include "Core/WebServer.h"
 #include "Core/HLE/sceUtility.h"
+#include "Core/Instance.h"
 #include "Core/SaveState.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
@@ -179,7 +182,6 @@ std::string NativeLoadSecret(std::string_view nameOfSecret) {
 
 int printUsage(const CommandLineOptions &options, const char *progname, const char *reason) {
 	options.PrintUsage(progname, reason);
-	fprintf(stderr, "  --ir                  use ir interpreter\n");
 	fprintf(stderr, "  --flash0=DIR          use DIR as flash0: instead of the bundled assets (e.g. a real dump)\n");
 	return 1;
 }
@@ -281,6 +283,35 @@ static void SaveDepthBuffer(const GPUDebugBuffer &depth, const Path &path) {
 	fclose(f);
 }
 
+// At the render scale. pixels is the 1x readback, used when there's no scaling.
+static bool SaveDisplayScreenshot(const Path &path, const std::vector<u32> &pixels) {
+	const static u32 FRAME_STRIDE = 512;
+	const static u32 FRAME_WIDTH = 480;
+	const static u32 FRAME_HEIGHT = 272;
+	const GPUDebugFramebufferType type = g_screenshotRenderTarget ? GPU_DBG_FRAMEBUF_RENDER : GPU_DBG_FRAMEBUF_DISPLAY;
+	GPUDebugBuffer full;
+	const int scale = gpu->GetCurrentFramebuffer(full, type, -1) ? std::max(full.GetScaleFactor(), 1) : 1;
+	const u32 w = FRAME_WIDTH * scale;
+	const u32 h = FRAME_HEIGHT * scale;
+	const std::vector<u32> fullPixels = scale > 1 ? TranslateDebugBufferToCompare(&full, w, h) : pixels;
+	ScreenshotComparer saver(fullPixels, scale > 1 ? w : FRAME_STRIDE, w, h);
+	bool saved = path.GetFileExtension() == ".png" ? saver.SaveActualPNG(path, g_screenshotSaveKeepAlpha) : saver.SaveActualBitmap(path);
+	if (saved) {
+		SendAndCollectOutput("Screenshot saved to: " + path.ToVisualString() + "\n");
+	}
+	return saved;
+}
+
+static void SaveScreenshotNow(const Path &path) {
+	if (!gpu) {
+		return;
+	}
+	const GPUDebugFramebufferType type = g_screenshotRenderTarget ? GPU_DBG_FRAMEBUF_RENDER : GPU_DBG_FRAMEBUF_DISPLAY;
+	GPUDebugBuffer buffer;
+	gpu->GetCurrentFramebuffer(buffer, type, 1);
+	SaveDisplayScreenshot(path, TranslateDebugBufferToCompare(&buffer, 512, 272));
+}
+
 void SendDebugScreenshot(const DebugScreenshotDesc &desc) {
 	const u8 *pixbuf = (const u8 *)desc.data;
 	u32 w = desc.stride;
@@ -300,16 +331,8 @@ void SendDebugScreenshot(const DebugScreenshotDesc &desc) {
 
 	// If a screenshot save path is set, save unconditionally, at the render scale.
 	if (!g_screenshotSavePath.empty()) {
-		GPUDebugBuffer full;
-		const int scale = gpu->GetCurrentFramebuffer(full, type, -1) ? std::max(full.GetScaleFactor(), 1) : 1;
-		const u32 w = FRAME_WIDTH * scale;
-		const u32 h = FRAME_HEIGHT * scale;
-		const std::vector<u32> fullPixels = scale > 1 ? TranslateDebugBufferToCompare(&full, w, h) : pixels;
-		ScreenshotComparer saver(fullPixels, scale > 1 ? w : FRAME_STRIDE, w, h);
-		bool saved = g_screenshotSavePath.GetFileExtension() == ".png" ? saver.SaveActualPNG(g_screenshotSavePath, g_screenshotSaveKeepAlpha) : saver.SaveActualBitmap(g_screenshotSavePath);
+		bool saved = SaveDisplayScreenshot(g_screenshotSavePath, pixels);
 		g_screenshotSaved = g_screenshotSaved || saved;
-		if (saved)
-			SendAndCollectOutput("Screenshot saved to: " + g_screenshotSavePath.ToVisualString() + "\n");
 	}
 
 	if (!g_depthSavePath.empty()) {
@@ -410,12 +433,22 @@ struct AutoTestOptions {
 	bool bench;
 	bool printEqualLines;
 	bool frameStats;
+	// Keep emulated time from running ahead of the wall clock (--realtime).
+	bool realtime;
 	// What --disable-hle asked for, or 0 if it was not passed. Only an explicit request binds:
 	// sceMpeg and sceMp4 run the firmware module by default now and fall back to the HLE wherever
 	// none is installed, which must not fail every run on such a machine.
 	int requiredDisableHLE;
 	// The WebSocket debugger is on (--debugger or --debugger-run), so a stop is its to resume.
 	bool debugger;
+	// --press, in emulated seconds.
+	struct Press {
+		double start;
+		double duration;
+		u32 buttons;
+	};
+	std::vector<Press> presses;
+	std::vector<std::pair<double, Path>> screenshotsAt;
 };
 
 // Ends a frame of the draw context the way the app does, presenting it. Unpresented frames never
@@ -528,8 +561,53 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 	std::vector<int> flipsPerSecond;
 	double statsStart = -1.0;
 	int statsLastFlips = 0;
+	std::vector<std::pair<double, Path>> screenshotsAt = opt.screenshotsAt;
 	coreState = coreParameter.startBreak ? CORE_STEPPING_CPU : CORE_RUNNING_CPU;
-	while (coreState == CORE_RUNNING_CPU || coreState == CORE_STEPPING_CPU) {
+
+	// The XMB starting a game, or a game going back to it: boot that, the way the app does, and keep
+	// going on the same clocks. False if nothing asked for it, or the boot failed.
+	bool rebootFailed = false;
+	auto rebootIfRequested = [&]() -> bool {
+		BootRequest request;
+		if (coreState != CORE_POWERDOWN || !PSP_TakeBootRequest(&request)) {
+			return false;
+		}
+		if (gpu) {
+			gpu->EndHostFrame();
+		}
+		if (draw) {
+			EndDrawFrame(draw);
+		}
+		PSP_Shutdown(true);
+		request.ApplyTo(&coreParameter);
+		std::string error;
+		if (PSP_InitStart(coreParameter)) {
+			while (PSP_InitUpdate(&error) == BootState::Booting) {
+				sleep_ms(1, "auto-test");
+			}
+		}
+		if (!PSP_IsInited()) {
+			fprintf(stderr, "Failed to boot '%s': %s\n", coreParameter.fileToStart.c_str(), error.c_str());
+			g_bootFailed = true;
+			rebootFailed = true;
+			return false;
+		}
+		System_Notify(SystemNotification::BOOT_DONE);
+		draw = coreParameter.graphicsContext ? coreParameter.graphicsContext->GetDrawContext() : nullptr;
+		if (draw) {
+			draw->BeginFrame(Draw::DebugFlags::NONE);
+		}
+		if (gpu) {
+			gpu->BeginHostFrame(g_Config.GetDisplayLayoutConfig(DeviceOrientation::Landscape));
+		}
+		lastEmulatedTime = CoreTiming::GetGlobalTimeUs() / 1000000.0;
+		// Like the first boot. A debugger script's pending stop didn't survive the reboot, so it
+		// gets a fresh one here.
+		coreState = coreParameter.startBreak ? CORE_STEPPING_CPU : CORE_RUNNING_CPU;
+		return true;
+	};
+
+	while (coreState == CORE_RUNNING_CPU || coreState == CORE_STEPPING_CPU || rebootIfRequested()) {
 		// Savestate loads/saves are queued and applied here, same as EmuScreen::render does in the
 		// app. Without this, --state silently did nothing at all.
 		SaveState::Process();
@@ -547,7 +625,9 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 		const double emulatedNow = CoreTiming::GetGlobalTimeUs() / 1000000.0;
 		const double emulatedStep = emulatedNow - lastEmulatedTime;
 		lastEmulatedTime = emulatedNow;
-		if (emulatedStep > 0.0 && emulatedStep < emulatedStepLimit) {
+		// With --state, count from when the state lands. Until then the game boots, for however long
+		// reading and decompressing the state takes on the host, which made runs end on different frames.
+		if (emulatedStep > 0.0 && emulatedStep < emulatedStepLimit && !g_stateLoadPending) {
 			emulatedElapsed += emulatedStep;
 		}
 
@@ -559,7 +639,36 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 			});
 		}
 
-		int blockTicks = (int)usToCycles(1000000 / 10);
+		// Overlapping presses don't release each other's buttons.
+		if (!opt.presses.empty()) {
+			u32 held = 0, released = 0;
+			for (const auto &press : opt.presses) {
+				if (emulatedElapsed >= press.start && emulatedElapsed < press.start + press.duration) {
+					held |= press.buttons;
+				} else {
+					released |= press.buttons;
+				}
+			}
+			__CtrlUpdateButtons(held, released & ~held);
+		}
+		for (auto &shot : screenshotsAt) {
+			if (!shot.second.empty() && emulatedElapsed >= shot.first) {
+				SaveScreenshotNow(shot.second);
+				shot.second.clear();
+			}
+		}
+
+		// Finer steps when input is scripted, so short presses land.
+		int blockTicks = (int)usToCycles(1000000 / (opt.presses.empty() ? 10 : 60));
+		if (opt.realtime) {
+			// Display flips are the only thing that paces headless otherwise, and a test that doesn't
+			// draw never flips, so the emulated clock would race ahead of instances it talks to.
+			blockTicks = (int)usToCycles(1000);
+			const double ahead = emulatedElapsed - (time_now_d() - startTime);
+			if (ahead > 0.001) {
+				sleep_ms((int)(std::min(ahead, 0.05) * 1000.0), "realtime");
+			}
+		}
 		PSP_RunLoopFor(blockTicks);
 
 		// If we were rendering, this might be a nice time to do something about it.
@@ -614,6 +723,10 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 			Core_Stop();
 		}
 	}
+
+	if (rebootFailed) {
+		return false;
+	}
 	if (gpu) {
 		gpu->EndHostFrame();
 	}
@@ -640,7 +753,7 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 		if (gpu) {
 			gpu->SetCurFramebufferDirty(true);
 			gpu->PrepareCopyDisplayToOutput(g_Config.GetDisplayLayoutConfig(DeviceOrientation::Landscape));
-			draw->BindFramebufferAsRenderTarget(nullptr, {RPAction::CLEAR, RPAction::DONT_CARE, RPAction::DONT_CARE}, "BackBuffer");
+			draw->BindFramebufferAsRenderTarget(draw->GetPrimarySwapchain(), {RPAction::CLEAR, RPAction::DONT_CARE, RPAction::DONT_CARE}, "BackBuffer");
 			gpu->CopyDisplayToOutput(g_Config.GetDisplayLayoutConfig(DeviceOrientation::Landscape));
 		}
 
@@ -840,11 +953,9 @@ int main(int argc, const char* argv[]) {
 		return 0;
 	}
 
-	// Needed before any sockets can be used (WSAStartup on Windows) - without this, the
-	// WebSocket debugger silently fails to listen. Only done when requested since headless
-	// otherwise has no use for networking.
-	if (cmdLineOptions.DebuggerPort().has_value())
-		net::Init();
+	// Needed before any sockets can be used (WSAStartup on Windows), by the WebSocket debugger
+	// and by tests and games that use sceNetInet.
+	net::Init();
 
 	AutoTestOptions testOptions{};
 	testOptions.compare = cmdLineOptions.compare.value_or(false);
@@ -854,6 +965,31 @@ int main(int argc, const char* argv[]) {
 	testOptions.verbose = cmdLineOptions.verbose.value_or(false);
 	testOptions.printEqualLines = cmdLineOptions.printEqualLines.value_or(false);
 	testOptions.frameStats = cmdLineOptions.frameStats.value_or(false);
+	testOptions.realtime = cmdLineOptions.realtime.value_or(false);
+	// BUTTONS is a sceCtrl mask (hex with 0x), DURATION defaults to 0.15s.
+	if (cmdLineOptions.pressScript.has_value()) {
+		std::vector<std::string> items;
+		SplitString(cmdLineOptions.pressScript.value(), ',', items);
+		for (const std::string &item : items) {
+			std::vector<std::string> parts;
+			SplitString(item, ':', parts);
+			if (parts.size() < 2) {
+				continue;
+			}
+			AutoTestOptions::Press press{ atof(parts[0].c_str()), parts.size() > 2 ? atof(parts[2].c_str()) : 0.15, (u32)strtoul(parts[1].c_str(), nullptr, 0) };
+			testOptions.presses.push_back(press);
+		}
+	}
+	if (cmdLineOptions.screenshotAt.has_value()) {
+		std::vector<std::string> items;
+		SplitString(cmdLineOptions.screenshotAt.value(), ',', items);
+		for (const std::string &item : items) {
+			const size_t colon = item.find(':');
+			if (colon != std::string::npos) {
+				testOptions.screenshotsAt.emplace_back(atof(item.substr(0, colon).c_str()), Path(item.substr(colon + 1)));
+			}
+		}
+	}
 	testOptions.maxScreenshotError = cmdLineOptions.maxScreenshotError.value_or(0.0);
 	testOptions.requiredDisableHLE = cmdLineOptions.disableHLE.value_or(0);
 	testOptions.debugger = cmdLineOptions.DebuggerPort().has_value();
@@ -938,7 +1074,8 @@ int main(int argc, const char* argv[]) {
 			stats.compressionCounts[(int)PSARCompression::KL3E],
 			stats.compressionCounts[(int)PSARCompression::LZR],
 			stats.compressionCounts[(int)PSARCompression::Unknown]);
-		return ok ? 0 : 1;
+		// A walk that got to the end can still have failed on every file, so count those too.
+		return ok && stats.failed == 0 ? 0 : 1;
 	}
 
 	// Same deal for installing a game update package.
@@ -1030,6 +1167,9 @@ int main(int argc, const char* argv[]) {
 	g_Config.bEnableWlan = true;
 	// The net tests want WLAN on, but a test run shouldn't depend on reaching a real adhoc server.
 	g_Config.sProAdhocServer = "localhost";
+	// Headless doesn't join the app's instance counter (InitInstanceCounter), but behaves as the only
+	// instance: with the default 0, the localhost IP derived from it is 127.0.0.0, which macOS won't bind.
+	PPSSPP_ID = 1;
 	g_Config.sMACAddress = "12:34:56:78:9A:BC";
 	g_Config.iFirmwareVersion = PSP_DEFAULT_FIRMWARE;
 	g_Config.iPSPModel = PSP_MODEL_SLIM;
@@ -1055,6 +1195,9 @@ int main(int argc, const char* argv[]) {
 	// ApplyToConfig() has the final say, applied after RestoreDefaults() and the headless
 	// overrides above, so a matching command line flag always wins.
 	cmdLineOptions.ApplyToConfig();
+	// Instances talking to each other over ad hoc need their own 127.0.0.N address and MAC, which come
+	// from PPSSPP_ID. Headless doesn't run the instance counter the app uses to pick one.
+	PPSSPP_ID = (uint8_t)cmdLineOptions.instance.value_or(1);
 
 	// pspautotests is plain homebrew PRXes so do not ship user libraries that a retail disc may carry. 
 	// So we must use HLE, unless we install firmware.
@@ -1062,7 +1205,10 @@ int main(int argc, const char* argv[]) {
 	// headless has to as well or it isn't testing what ships.
 	const bool bootIsDisc = testFilenames.size() == 1 &&
 		!BootTargetIsHomebrewExecutable(testFilenames[0]);
-	if (!bootIsDisc) {
+	// The VSH is firmware, and runs the firmware's modules like the app does (its video player needs the
+	// real sceMpeg from mpeg_vsh.prx).
+	const bool bootIsVSH = cmdLineOptions.bootVSH.value_or(false);
+	if (!bootIsDisc && !bootIsVSH) {
 		g_Config.iForceEnableHLE = 0xFFFFFFFF & ~g_Config.iDisableHLE;
 	}
 
@@ -1194,7 +1340,8 @@ int main(int argc, const char* argv[]) {
 	coreParameter.renderHeight = 272 * coreParameter.renderScaleFactor;
 	coreParameter.pixelWidth = 480 * coreParameter.renderScaleFactor;
 	coreParameter.pixelHeight = 272 * coreParameter.renderScaleFactor;
-	coreParameter.fastForward = true;
+	// Ad hoc tests between instances wait for each other over the real network, so they need PSP speed.
+	coreParameter.fastForward = !cmdLineOptions.realtime.value_or(false);
 
 #if PPSSPP_PLATFORM(IOS)
 	// GetExeDirectory() knows nothing on iOS, but argv[0] is the executable inside the .app,
@@ -1447,9 +1594,7 @@ int main(int argc, const char* argv[]) {
 
 	g_VFS.Clear();
 	g_logManager.Shutdown();
-	if (cmdLineOptions.DebuggerPort().has_value()) {
-		net::Shutdown();
-	}
+	net::Shutdown();
 	TimeShutdown();
 
 	g_threadManager.Teardown();

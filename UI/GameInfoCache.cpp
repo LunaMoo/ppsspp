@@ -33,6 +33,7 @@
 #include "Common/System/Request.h"
 #include "Common/StringUtils.h"
 #include "Common/TimeUtil.h"
+#include "Core/FileLoaders/PS1EbootFileLoader.h"
 #include "Core/FileSystems/ISOFileSystem.h"
 #include "Core/FileSystems/BlockDevices.h"
 #include "Core/FileLoaders/ZArchiveFileLoader.h"
@@ -46,6 +47,7 @@
 #include "Core/Util/GameDB.h"
 #include "Core/Loaders.h"
 #include "Core/Util/GameManager.h"
+#include "Core/Util/PSARUnpack.h"
 #include "Core/Util/RecentFiles.h"
 #include "Core/Config.h"
 #include "UI/GameInfoCache.h"
@@ -672,6 +674,8 @@ public:
 		switch (contentType) {
 		case IdentifiedFileType::PSP_PBP:
 		case IdentifiedFileType::PSP_PBP_DIRECTORY:
+		case IdentifiedFileType::PSP_PS1_PBP:
+		case IdentifiedFileType::PSX_ISO:
 			{
 				auto pbpLoader = contentLoader;
 				if (fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) {
@@ -679,6 +683,9 @@ public:
 					if (ebootPath != gamePath_) {
 						pbpLoader.reset(ConstructFileLoader(ebootPath));
 					}
+				} else if (fileType == IdentifiedFileType::PSX_ISO) {
+					// The EBOOT a PS1 disc image boots as, which has its title and disc ID.
+					pbpLoader.reset(new PS1EbootFileLoader(gamePath_));
 				}
 
 				if (!pbpLoader->Exists()) {
@@ -710,8 +717,9 @@ public:
 						info_->ParseParamSFO(contentType);
 
 						// Assuming PSP_PBP_DIRECTORY without ID or with disc_total < 1 in GAME dir must be homebrew.
-						// From an archive, it's always from PSP/GAME.
+						// From an archive, it's always from PSP/GAME. Not a PS1 game, whose PARAM.SFO has no DISC_TOTAL.
 						if ((info_->id.empty() || !info_->disc_total)
+							&& info_->paramSFO.GetValueString("CATEGORY") != "ME"
 							&& ((gamePath_.FilePathContainsNoCase("PSP/GAME/") && fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) || fromArchive)) {
 							info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 							info_->id_version = info_->id + "_1.00";
@@ -784,14 +792,16 @@ public:
 
 		case IdentifiedFileType::PSP_ELF:
 handleELF:
-			info_->SetTitle(info_->GetFilePath().GetFilename());
-			// An elf on its own has no usable information, no icons, no nothing.
+		{
+			// An elf on its own has no usable information, no icons, no nothing. Except the XMB, which we name.
+			const std::string vshTitle = GetVSHTitle(gamePath_);
+			info_->SetTitle(vshTitle.empty() ? info_->GetFilePath().GetFilename() : vshTitle);
 			if (flags_ & GameInfoFlags::PARAM_SFO) {
 				const std::string fakeID = g_paramSFO.GenerateFakeID(gamePath_);
 				std::lock_guard<std::mutex> lock(info_->lock);
 				info_->id = fakeID;
 				info_->id_version = fakeID + "_1.00";
-				info_->region = equals(info_->title, "vshmain.prx") ? GameRegion::VSH : GameRegion::HOMEBREW;
+				info_->region = vshTitle.empty() ? GameRegion::HOMEBREW : GameRegion::VSH;
 			}
 
 			if (flags_ & GameInfoFlags::ICON) {
@@ -799,8 +809,10 @@ handleELF:
 				// Due to the dependency of the BASIC info, we fetch it already here.
 				Path screenshot_jpg = GetSysDirectory(DIRECTORY_SCREENSHOT) / (id + "_00000.jpg");
 				Path screenshot_png = GetSysDirectory(DIRECTORY_SCREENSHOT) / (id + "_00000.png");
-				// Try using png/jpg screenshots first
-				if (File::Exists(screenshot_png)) {
+				if (!vshTitle.empty()) {
+					ReadVFSToString("ui_images/xmb_icon.png", &info_->icon.data, &info_->lock);
+				} else if (File::Exists(screenshot_png)) {
+					// Otherwise a png/jpg screenshot, if there is one.
 					ReadLocalFileToString(screenshot_png, &info_->icon.data, &info_->lock);
 				} else if (File::Exists(screenshot_jpg)) {
 					ReadLocalFileToString(screenshot_jpg, &info_->icon.data, &info_->lock);
@@ -810,6 +822,7 @@ handleELF:
 				info_->icon.dataLoaded = true;
 			}
 			break;
+		}
 
 		case IdentifiedFileType::PSP_SAVEDATA_DIRECTORY:
 		{
@@ -954,7 +967,8 @@ handleELF:
 
 				// Most UMDs carry a firmware updater, which is a source of things like the
 				// system fonts. Just note down what's there - unpacking it is a separate step.
-				if (flags_ & GameInfoFlags::BUNDLED_UPDATE_INFO) {
+				// UMD Video discs only carry a placeholder (an empty DATA.BIN), so they're skipped.
+				if ((flags_ & GameInfoFlags::BUNDLED_UPDATE_INFO) && fileType != IdentifiedFileType::PSP_UMD_VIDEO_ISO) {
 					BundledUpdateInfo update;
 					ReadBundledUpdateInfo(&umd, "/", &update);
 					std::lock_guard<std::mutex> lock(info_->lock);

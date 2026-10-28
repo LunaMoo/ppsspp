@@ -237,6 +237,17 @@ struct GPUStatistics_v0 {
 	int moreInts[15];
 };
 
+// A savestate's display framebuffer, straight from the file. The stride can be anything (the PSP
+// takes negative ones, and GE dump playback sets others): presenting checks that.
+static void SanitizeLoadedFramebuf(FrameBufferState &fb) {
+	const bool validAddr = fb.topaddr == 0 || Memory::IsRAMAddress(fb.topaddr) || Memory::IsVRAMAddress(fb.topaddr);
+	if (!validAddr || fb.fmt < GE_FORMAT_565 || fb.fmt > GE_FORMAT_8888) {
+		ERROR_LOG(Log::SaveState, "Savestate has an invalid display framebuffer (%08x, format %d), turning the display off", fb.topaddr, (int)fb.fmt);
+		fb.topaddr = 0;
+		fb.fmt = GE_FORMAT_8888;
+	}
+}
+
 void __DisplayDoState(PointerWrap &p) {
 	auto s = p.Section("sceDisplay", 1, 8);
 	if (!s)
@@ -244,6 +255,10 @@ void __DisplayDoState(PointerWrap &p) {
 
 	Do(p, framebuf);
 	Do(p, latchedFramebuf);
+	if (p.mode == p.MODE_READ) {
+		SanitizeLoadedFramebuf(framebuf);
+		SanitizeLoadedFramebuf(latchedFramebuf);
+	}
 	Do(p, framebufIsLatched);
 	DisplayHWDoState(p, s <= 2);
 	Do(p, hasSetMode);
@@ -354,7 +369,7 @@ void __DisplayVblankBeginCallback(SceUID threadID, SceUID prevCallbackId) {
 	}
 
 	if (waitData.threadID != threadID) {
-		WARN_LOG_REPORT(Log::sceDisplay, "sceDisplayWaitVblankCB: could not find waiting thread info.");
+		WARN_LOG(Log::sceDisplay, "sceDisplayWaitVblankCB: could not find waiting thread info.");
 		return;
 	}
 
@@ -409,9 +424,9 @@ static int FrameTimingLimit() {
 		return 0;
 	// Can't slow down in hardcore mode.
 	if (PSP_CoreParameter().fpsLimit == FPSLimit::CUSTOM1)
-		return fixRate(g_Config.iFpsLimit1);
+		return fixRate(AltSpeedPercentToFps(g_Config.iAltSpeedPercent1));
 	if (PSP_CoreParameter().fpsLimit == FPSLimit::CUSTOM2)
-		return fixRate(g_Config.iFpsLimit2);
+		return fixRate(AltSpeedPercentToFps(g_Config.iAltSpeedPercent2));
 	if (PSP_CoreParameter().fpsLimit == FPSLimit::ANALOG)
 		return fixRate(PSP_CoreParameter().analogFpsLimit);
 	if (PSP_CoreParameter().fpsLimit == FPSLimit::DEBUGGER)
@@ -875,7 +890,7 @@ void __DisplayWaitForVblanks(const char *reason, int vblanks, bool callbacks) {
 
 static u32 sceDisplaySetMode(int displayMode, int displayWidth, int displayHeight) {
 	if (displayMode != PSP_DISPLAY_MODE_LCD || displayWidth != 480 || displayHeight != 272) {
-		WARN_LOG_REPORT(Log::sceDisplay, "Video out requested, not supported: mode=%d size=%d,%d", displayMode, displayWidth, displayHeight);
+		WARN_LOG(Log::sceDisplay, "Video out requested, not supported: mode=%d size=%d,%d", displayMode, displayWidth, displayHeight);
 	}
 	if (displayMode != PSP_DISPLAY_MODE_LCD) {
 		return hleLogWarning(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_MODE, "invalid mode");
@@ -928,7 +943,7 @@ void __DisplaySetFramebuf(u32 topaddr, int linesize, int pixelFormat, int sync) 
 }
 
 // Some games (GTA) never call this during gameplay, so bad place to put a framerate counter.
-int sceDisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync) {
+int sceDisplaySetFramebuf(MIPSState *mips, u32 topaddr, int linesize, int pixelformat, int sync) {
 	if (sync != PSP_DISPLAY_SETBUF_IMMEDIATE && sync != PSP_DISPLAY_SETBUF_NEXTFRAME) {
 		return hleLogError(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_MODE, "invalid sync mode");
 	}
@@ -969,7 +984,7 @@ int sceDisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync) 
 		// Otherwise it'll always be ahead if the game messes up even once.
 		const s64 LEEWAY_CYCLES_PER_FLIP = usToCycles(10);
 
-		u64 now = CoreTiming::GetTicks(currentMIPS);
+		u64 now = CoreTiming::GetTicks(mips);
 		s64 cyclesAhead = nextFlipCycles - now;
 		if (cyclesAhead > FLIP_DELAY_CYCLES_MIN) {
 			if (lastFlipsTooFrequent >= FLIP_DELAY_MIN_FLIPS) {
@@ -1141,8 +1156,8 @@ static u32 sceDisplayGetMode(u32 modeAddr, u32 widthAddr, u32 heightAddr) {
 	return hleLogDebug(Log::sceDisplay, 0);
 }
 
-static u32 sceDisplayIsVsync() {
-	u64 now = CoreTiming::GetTicks(currentMIPS);
+static u32 sceDisplayIsVsync(MIPSState *mips) {
+	u64 now = CoreTiming::GetTicks(mips);
 	u64 start = DisplayFrameStartTicks() + msToCycles(vsyncStartMs);
 	u64 end = DisplayFrameStartTicks() + msToCycles(vsyncEndMs);
 
@@ -1186,6 +1201,13 @@ static u32 sceDisplaySetHoldMode(u32 hMode) {
 	return hleLogWarning(Log::sceDisplay, 0, "UNIMPL");
 }
 
+// 6.61's display_02g.prx returns a global its init sets from the LCD panel type in IdStorage:
+// 0x0103000B for type 1, 0x0103020F for type 2 (sceDisplay_driver_206276C2), never 0. The VSH's
+// video player polls it through vshbridge.prx, and with 0 never sets up its picture output.
+static u32 sceDisplay_driver_996881D2() {
+	return hleLogDebug(Log::sceDisplay, 0x0103000B);
+}
+
 const HLEFunction sceDisplay[] = {
 	{0X0E20F177, &WrapU_III<sceDisplaySetMode>,               "sceDisplaySetMode",                 'x', "iii" },
 	{0X289D82FE, &WrapI_UIII<sceDisplaySetFramebuf>,          "sceDisplaySetFrameBuf",             'i', "xiii"},
@@ -1210,6 +1232,7 @@ const HLEFunction sceDisplay[] = {
 	{0X9E3C6DC6, &WrapU_II<sceDisplaySetBrightness>,          "sceDisplaySetBrightness",           'x', "ii"  },
 	{0X4D4E10EC, &WrapU_V<sceDisplayIsVblank>,                "sceDisplayIsVblank",                'x', ""    },
 	{0X21038913, &WrapU_V<sceDisplayIsVsync>,                 "sceDisplayIsVsync",                 'x', ""    },
+	{0X996881D2, &WrapU_V<sceDisplay_driver_996881D2>,        "sceDisplay_driver_996881D2",        'x', ""    },
 };
 
 void Register_sceDisplay() {

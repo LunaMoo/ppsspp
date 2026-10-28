@@ -42,6 +42,14 @@ void __UmdDoState(PointerWrap &p);
 void __UmdReplace(const Path &filepath);
 // Switches to another disc of the ZArchive the game was started from, see GetRunningArchiveDiscs.
 void __UmdReplaceArchiveDisc(int discIndex);
+// A drive that can be empty: the XMB's, booted without a game. Insert fails if a disc is in.
+bool __UmdInsert(const Path &filepath, std::string *error);
+void __UmdEject();
+bool __UmdIsInserted();
+// The host path of the disc image in the drive, or empty if there's none.
+Path __UmdGetPath();
+// What's on the disc in the drive (PSP_UMD_TYPE_* bits), or 0 for an empty drive.
+u32 __UmdDiscType();
 bool getUMDReplacePermit();
 
 void Register_sceUmdUser();

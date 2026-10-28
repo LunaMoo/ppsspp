@@ -144,8 +144,8 @@ static void ApplyPrefixST(MIPSState *mips, float *r, u32 data, VectorSize size, 
 
 		if (!constants) {
 			if (regnum >= n) {
-				// We mostly handle this now, but still worth reporting.
-				ERROR_LOG_REPORT(Log::CPU, "Invalid VFPU swizzle: %08x: %i / %d at PC = %08x (%s)", data, regnum, n, mips->pc, MIPSDisasmAt(mips->pc).c_str());
+				// We handle this now, let's log anyway.
+				ERROR_LOG(Log::CPU, "Invalid VFPU swizzle: %08x: %i / %d at PC = %08x (%s)", data, regnum, n, mips->pc, MIPSDisasmAt(mips->pc).c_str());
 			}
 			r[i] = origV[regnum];
 			if (abs)
@@ -255,14 +255,14 @@ namespace MIPSInt
 				float d[4];
 				ReadVector(mips, d, V_Quad, vt);
 				int offset = (addr >> 2) & 3;
-				const bool valid = Memory::IsValid4AlignedAddress(addr);
+				const bool valid = mips->space->IsValid4AlignedAddress(addr);
 				if ((op & 2) == 0) {
 					if (!valid) {
 						Core_MemoryException(addr, 16, PC, MemoryExceptionType::READ_WORD, "lvl.q");
 					}
 					// It's an LVL
 					for (int i = 0; i < offset + 1; i++) {
-						d[3 - i] = valid ? Memory::ReadUnchecked_Float(addr - 4 * i) : 0.0f;
+						d[3 - i] = valid ? mips->space->ReadUnchecked_Float(addr - 4 * i) : 0.0f;
 					}
 				} else {
 					if (!valid) {
@@ -270,7 +270,7 @@ namespace MIPSInt
 					}
 					// It's an LVR
 					for (int i = 0; i < (3 - offset) + 1; i++) {
-						d[i] = valid ? Memory::ReadUnchecked_Float(addr + 4 * i) : 0.0f;
+						d[i] = valid ? mips->space->ReadUnchecked_Float(addr + 4 * i) : 0.0f;
 					}
 				}
 				WriteLoadedVector(mips, d, vt);
@@ -280,7 +280,7 @@ namespace MIPSInt
 		case 54: //lv.q
 			// A quadword access has to be 16-byte aligned, so a misaligned one is simply
 			// rejected - we don't try to carry it out anyway, same as every other path here.
-			if ((addr & 0xF) || !Memory::IsValid4AlignedAddress(addr)) {
+			if ((addr & 0xF) || !mips->space->IsValid4AlignedAddress(addr)) {
 				Core_MemoryException(addr, 16, PC, MemoryExceptionType::READ_WORD, "lv.q");
 				const float zero[4]{};
 				WriteLoadedVector(mips, zero, vt);
@@ -288,15 +288,15 @@ namespace MIPSInt
 			}
 
 #ifndef COMMON_BIG_ENDIAN
-			cf = reinterpret_cast<const float *>(Memory::GetPointerUnchecked(addr));
+			cf = reinterpret_cast<const float *>(mips->space->GetPointerUnchecked(addr));
 			WriteLoadedVector(mips, cf, vt);
 #else
 			float lvqd[4];
 
-			lvqd[0] = Memory::ReadUnchecked_Float(addr);
-			lvqd[1] = Memory::ReadUnchecked_Float(addr + 4);
-			lvqd[2] = Memory::ReadUnchecked_Float(addr + 8);
-			lvqd[3] = Memory::ReadUnchecked_Float(addr + 12);
+			lvqd[0] = mips->space->ReadUnchecked_Float(addr);
+			lvqd[1] = mips->space->ReadUnchecked_Float(addr + 4);
+			lvqd[2] = mips->space->ReadUnchecked_Float(addr + 8);
+			lvqd[3] = mips->space->ReadUnchecked_Float(addr + 12);
 
 			WriteLoadedVector(mips, lvqd, vt);
 #endif
@@ -308,23 +308,23 @@ namespace MIPSInt
 				ReadVector(mips, d, V_Quad, vt);
 				int offset = (addr >> 2) & 3;
 				if ((op & 2) == 0) {
-					if (!Memory::IsValid4AlignedAddress(addr)) {
+					if (!mips->space->IsValid4AlignedAddress(addr)) {
 						Core_MemoryException(addr, 16, PC, MemoryExceptionType::WRITE_WORD, "svl.q");
 						break;
 					}
 					// It's an SVL
 					for (int i = 0; i < offset + 1; i++)
 					{
-						Memory::WriteUnchecked_Float(d[3 - i], addr - i * 4);
+						mips->space->WriteUnchecked_Float(d[3 - i], addr - i * 4);
 					}
 				} else {
-					if (!Memory::IsValid4AlignedAddress(addr)) {
+					if (!mips->space->IsValid4AlignedAddress(addr)) {
 						Core_MemoryException(addr, 16, PC, MemoryExceptionType::WRITE_WORD, "svr.q");
 						break;
 					}
 					// It's an SVR
 					for (int i = 0; i < (3 - offset) + 1; i++) {
-						Memory::WriteUnchecked_Float(d[i], addr + 4 * i);
+						mips->space->WriteUnchecked_Float(d[i], addr + 4 * i);
 					}
 				}
 				break;
@@ -332,12 +332,12 @@ namespace MIPSInt
 
 		case 62: //sv.q
 			// See lv.q above.
-			if ((addr & 0xF) || !Memory::IsValid4AlignedAddress(addr)) {
+			if ((addr & 0xF) || !mips->space->IsValid4AlignedAddress(addr)) {
 				Core_MemoryException(addr, 16, PC, MemoryExceptionType::WRITE_WORD, "sv.q");
 				break;
 			}
 #ifndef COMMON_BIG_ENDIAN
-			f = reinterpret_cast<float *>(Memory::GetPointerWriteUnchecked(addr));
+			f = reinterpret_cast<float *>(mips->space->GetPointerUnchecked(addr));
 			if (f) {
 				ReadVector(mips, f, V_Quad, vt);
 			}
@@ -345,10 +345,10 @@ namespace MIPSInt
 			float svqd[4];
 			ReadVector(mips, svqd, V_Quad, vt);
 
-			Memory::WriteUnchecked_Float(svqd[0], addr);
-			Memory::WriteUnchecked_Float(svqd[1], addr + 4);
-			Memory::WriteUnchecked_Float(svqd[2], addr + 8);
-			Memory::WriteUnchecked_Float(svqd[3], addr + 12);
+			mips->space->WriteUnchecked_Float(svqd[0], addr);
+			mips->space->WriteUnchecked_Float(svqd[1], addr + 4);
+			mips->space->WriteUnchecked_Float(svqd[2], addr + 8);
+			mips->space->WriteUnchecked_Float(svqd[3], addr + 12);
 #endif
 			break;
 
@@ -939,7 +939,7 @@ namespace MIPSInt
 			break;
 
 		default:
-			ERROR_LOG_REPORT(Log::CPU, "vf2h with invalid elements");
+			ERROR_LOG(Log::CPU, "vf2h with invalid elements");
 			break;
 		}
 		ApplyPrefixD(mips, reinterpret_cast<float *>(d), outsize);
@@ -1009,7 +1009,7 @@ namespace MIPSInt
 				break;
 
 			default:
-				ERROR_LOG_REPORT(Log::CPU, "vus2i with more than 2 elements");
+				ERROR_LOG(Log::CPU, "vus2i with more than 2 elements");
 				break;
 			}
 			break;
@@ -1035,7 +1035,7 @@ namespace MIPSInt
 				break;
 
 			default:
-				ERROR_LOG_REPORT(Log::CPU, "vs2i with more than 2 elements");
+				ERROR_LOG(Log::CPU, "vs2i with more than 2 elements");
 				break;
 			}
 			break;
@@ -1745,19 +1745,19 @@ namespace MIPSInt
 		switch (op >> 26)
 		{
 		case 50: //lv.s
-			if (!Memory::IsValid4AlignedAddress(addr)) {
+			if (!mips->space->IsValid4AlignedAddress(addr)) {
 				Core_MemoryException(addr, 4, PC, MemoryExceptionType::READ_WORD, "lv.s");
 				VI(vt) = 0;
 				break;
 			}
-			VI(vt) = Memory::ReadUnchecked_U32(addr);
+			VI(vt) = mips->space->ReadUnchecked_U32(addr);
 			break;
 		case 58: //sv.s
-			if (!Memory::IsValid4AlignedAddress(addr)) {
+			if (!mips->space->IsValid4AlignedAddress(addr)) {
 				Core_MemoryException(addr, 4, PC, MemoryExceptionType::WRITE_WORD, "sv.s");
 				break;
 			}
-			Memory::WriteUnchecked_U32(VI(vt), addr);
+			mips->space->WriteUnchecked_U32(VI(vt), addr);
 			break;
 		default:
 			_dbg_assert_msg_(false,"Trying to interpret instruction that can't be interpreted");
@@ -2202,7 +2202,7 @@ namespace MIPSInt
 			break;
 
 		default:
-			ERROR_LOG_REPORT(Log::CPU, "vcrsp/vqmul with invalid elements");
+			ERROR_LOG(Log::CPU, "vcrsp/vqmul with invalid elements");
 			break;
 		}
 

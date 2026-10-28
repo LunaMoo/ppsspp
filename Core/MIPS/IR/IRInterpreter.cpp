@@ -15,6 +15,8 @@
 #include "Core/Debugger/Breakpoints.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/ReplaceTables.h"
+#include "Core/HW/MMIO.h"
+#include "Core/MemFault.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSTables.h"
@@ -70,6 +72,69 @@ u32 IRRunMemCheck(u32 pc, u32 addr) {
 	return coreState != CORE_RUNNING_CPU ? 1 : 0;
 }
 
+// LoadKernel* and StoreKernel*: memory, or a hardware register, like the interpreter's loads and stores.
+template <int size>
+static bool IsValidAlignedAddress(const Memory::AddressSpace &space, u32 addr) {
+	switch (size) {
+	case 1: return space.IsValidAddress(addr);
+	case 2: return space.IsValid2AlignedAddress(addr);
+	default: return space.IsValid4AlignedAddress(addr);
+	}
+}
+
+template <int size, bool sign>
+static u32 RunKernelLoad(MIPSState *mips, u32 addr) {
+	u32 value;
+	if (IsValidAlignedAddress<size>(*mips->space, addr)) {
+		switch (size) {
+		case 1: value = mips->space->ReadUnchecked_U8(addr); break;
+		case 2: value = mips->space->ReadUnchecked_U16(addr); break;
+		default: value = mips->space->ReadUnchecked_U32(addr); break;
+		}
+	} else if (Memory::IsMMIOAccess(addr)) {
+		value = MMIO::Read(mips, addr, size);
+	} else {
+		Core_MemoryException(addr, size, mips->pc, MemoryExceptionType::READ_WORD, "kernel load");
+		return 0;
+	}
+	if (sign)
+		value = size == 1 ? SignExtend8ToU32(value) : SignExtend16ToU32(value);
+	return value;
+}
+
+template <int size>
+static void RunKernelStore(MIPSState *mips, u32 addr, u32 value) {
+	if (IsValidAlignedAddress<size>(*mips->space, addr)) {
+		switch (size) {
+		case 1: mips->space->WriteUnchecked_U8((u8)value, addr); break;
+		case 2: mips->space->WriteUnchecked_U16((u16)value, addr); break;
+		default: mips->space->WriteUnchecked_U32(value, addr); break;
+		}
+	} else if (Memory::IsMMIOAccess(addr)) {
+		MMIO::Write(mips, addr, size, value);
+	} else {
+		Core_MemoryException(addr, size, mips->pc, MemoryExceptionType::WRITE_WORD, "kernel store");
+	}
+}
+
+u32 IRRunKernelLoad(MIPSState *mips, u32 addr, u32 op) {
+	switch ((IROp)op) {
+	case IROp::LoadKernel8: return RunKernelLoad<1, false>(mips, addr);
+	case IROp::LoadKernel8Ext: return RunKernelLoad<1, true>(mips, addr);
+	case IROp::LoadKernel16: return RunKernelLoad<2, false>(mips, addr);
+	case IROp::LoadKernel16Ext: return RunKernelLoad<2, true>(mips, addr);
+	default: return RunKernelLoad<4, false>(mips, addr);
+	}
+}
+
+void IRRunKernelStore(MIPSState *mips, u32 addr, u32 value, u32 op) {
+	switch ((IROp)op) {
+	case IROp::StoreKernel8: RunKernelStore<1>(mips, addr, value); break;
+	case IROp::StoreKernel16: RunKernelStore<2>(mips, addr, value); break;
+	default: RunKernelStore<4>(mips, addr, value); break;
+	}
+}
+
 // With GCC and Clang, each op jumps straight to the next op's handler through a table ("threaded"
 // dispatch), which predicts much better than the one shared indirect jump of a switch. Other
 // compilers get the switch. Ops missing from the table fall back to the switch, so they still work.
@@ -101,9 +166,9 @@ u32 IRRunMemCheck(u32 pc, u32 addr) {
 // compiled, the way IRJit::RunBlocks would after we returned (minus the call and the lookup there).
 #define IR_EXIT(pcExpr) do { \
 	const u32 exitPC = (pcExpr); \
-	if (!chainArena || mips->downcount < 0 || !Memory::IsValid4AlignedAddress(exitPC)) \
+	if (!chainArena || mips->downcount < 0 || !space.IsValid4AlignedAddress(exitPC)) \
 		return exitPC; \
-	const u32 offset = *Memory::GetBlockShadowEntry(exitPC); \
+	const u32 offset = *space.GetBlockShadowEntry(exitPC); \
 	if (offset <= Memory::BLOCK_SHADOW_HOOK_NO_JIT) \
 		return exitPC; \
 	mips->pc = exitPC; \
@@ -113,6 +178,9 @@ u32 IRRunMemCheck(u32 pc, u32 addr) {
 } while (false)
 
 u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
+	const Memory::AddressSpace &space = *mips->space;
+	// Lets a bad guest access halt the core. Calls out to HLE and the like leave this scope.
+	Memory::IRInterpreterFaultScope faultScope(true);
 #if IR_THREADED_DISPATCH
 	static const void *dispatch[256];
 	static bool dispatchReady = false;
@@ -158,6 +226,14 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 		dispatch[(int)IROp::StoreFloat] = &&L_StoreFloat;
 		dispatch[(int)IROp::LoadVec4] = &&L_LoadVec4;
 		dispatch[(int)IROp::StoreVec4] = &&L_StoreVec4;
+		dispatch[(int)IROp::LoadKernel8] = &&L_LoadKernel8;
+		dispatch[(int)IROp::LoadKernel8Ext] = &&L_LoadKernel8Ext;
+		dispatch[(int)IROp::LoadKernel16] = &&L_LoadKernel16;
+		dispatch[(int)IROp::LoadKernel16Ext] = &&L_LoadKernel16Ext;
+		dispatch[(int)IROp::LoadKernel32] = &&L_LoadKernel32;
+		dispatch[(int)IROp::StoreKernel8] = &&L_StoreKernel8;
+		dispatch[(int)IROp::StoreKernel16] = &&L_StoreKernel16;
+		dispatch[(int)IROp::StoreKernel32] = &&L_StoreKernel32;
 		dispatch[(int)IROp::Vec4Init] = &&L_Vec4Init;
 		dispatch[(int)IROp::Vec4Shuffle] = &&L_Vec4Shuffle;
 		dispatch[(int)IROp::Vec4Blend] = &&L_Vec4Blend;
@@ -369,25 +445,25 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 			IR_NEXT;
 
 		IR_CASE(Load8)
-			mips->r[inst->dest] = Memory::ReadUnchecked_U8(mips->r[inst->src1] + inst->constant);
+			mips->r[inst->dest] = space.ReadUnchecked_U8(mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Load8Ext)
-			mips->r[inst->dest] = SignExtend8ToU32(Memory::ReadUnchecked_U8(mips->r[inst->src1] + inst->constant));
+			mips->r[inst->dest] = SignExtend8ToU32(space.ReadUnchecked_U8(mips->r[inst->src1] + inst->constant));
 			IR_NEXT;
 		IR_CASE(Load16)
-			mips->r[inst->dest] = Memory::ReadUnchecked_U16(mips->r[inst->src1] + inst->constant);
+			mips->r[inst->dest] = space.ReadUnchecked_U16(mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Load16Ext)
-			mips->r[inst->dest] = SignExtend16ToU32(Memory::ReadUnchecked_U16(mips->r[inst->src1] + inst->constant));
+			mips->r[inst->dest] = SignExtend16ToU32(space.ReadUnchecked_U16(mips->r[inst->src1] + inst->constant));
 			IR_NEXT;
 		IR_CASE(Load32)
-			mips->r[inst->dest] = Memory::ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
+			mips->r[inst->dest] = space.ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Load32Left)
 		{
 			u32 addr = mips->r[inst->src1] + inst->constant;
 			u32 shift = (addr & 3) * 8;
-			u32 mem = Memory::ReadUnchecked_U32(addr & 0xfffffffc);
+			u32 mem = space.ReadUnchecked_U32(addr & 0xfffffffc);
 			u32 destMask = 0x00ffffff >> shift;
 			mips->r[inst->dest] = (mips->r[inst->dest] & destMask) | (mem << (24 - shift));
 			IR_NEXT;
@@ -396,52 +472,52 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 		{
 			u32 addr = mips->r[inst->src1] + inst->constant;
 			u32 shift = (addr & 3) * 8;
-			u32 mem = Memory::ReadUnchecked_U32(addr & 0xfffffffc);
+			u32 mem = space.ReadUnchecked_U32(addr & 0xfffffffc);
 			u32 destMask = 0xffffff00 << (24 - shift);
 			mips->r[inst->dest] = (mips->r[inst->dest] & destMask) | (mem >> shift);
 			IR_NEXT;
 		}
 		IR_CASE(Load32Linked)
 			if (inst->dest != MIPS_REG_ZERO)
-				mips->r[inst->dest] = Memory::ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
+				mips->r[inst->dest] = space.ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
 			mips->llBit = 1;
 			IR_NEXT;
 		IR_CASE(LoadFloat)
-			mips->f[inst->dest] = Memory::ReadUnchecked_Float(mips->r[inst->src1] + inst->constant);
+			mips->f[inst->dest] = space.ReadUnchecked_Float(mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 
 		IR_CASE(Store8)
-			Memory::WriteUnchecked_U8(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
+			space.WriteUnchecked_U8(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Store16)
-			Memory::WriteUnchecked_U16(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
+			space.WriteUnchecked_U16(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Store32)
-			Memory::WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
+			space.WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 		IR_CASE(Store32Left)
 		{
 			u32 addr = mips->r[inst->src1] + inst->constant;
 			u32 shift = (addr & 3) * 8;
-			u32 mem = Memory::ReadUnchecked_U32(addr & 0xfffffffc);
+			u32 mem = space.ReadUnchecked_U32(addr & 0xfffffffc);
 			u32 memMask = 0xffffff00 << shift;
 			u32 result = (mips->r[inst->src3] >> (24 - shift)) | (mem & memMask);
-			Memory::WriteUnchecked_U32(result, addr & 0xfffffffc);
+			space.WriteUnchecked_U32(result, addr & 0xfffffffc);
 			IR_NEXT;
 		}
 		IR_CASE(Store32Right)
 		{
 			u32 addr = mips->r[inst->src1] + inst->constant;
 			u32 shift = (addr & 3) * 8;
-			u32 mem = Memory::ReadUnchecked_U32(addr & 0xfffffffc);
+			u32 mem = space.ReadUnchecked_U32(addr & 0xfffffffc);
 			u32 memMask = 0x00ffffff >> (24 - shift);
 			u32 result = (mips->r[inst->src3] << shift) | (mem & memMask);
-			Memory::WriteUnchecked_U32(result, addr & 0xfffffffc);
+			space.WriteUnchecked_U32(result, addr & 0xfffffffc);
 			IR_NEXT;
 		}
 		IR_CASE(Store32Conditional)
 			if (mips->llBit) {
-				Memory::WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
+				space.WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
 				if (inst->dest != MIPS_REG_ZERO) {
 					mips->r[inst->dest] = 1;
 				}
@@ -450,22 +526,47 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 			}
 			IR_NEXT;
 		IR_CASE(StoreFloat)
-			Memory::WriteUnchecked_Float(mips->f[inst->src3], mips->r[inst->src1] + inst->constant);
+			space.WriteUnchecked_Float(mips->f[inst->src3], mips->r[inst->src1] + inst->constant);
 			IR_NEXT;
 
 		IR_CASE(LoadVec4)
 		{
 			u32 base = mips->r[inst->src1] + inst->constant;
 			// This compiles to a nice SSE load/store on x86, and hopefully similar on ARM.
-			memcpy(&mips->f[inst->dest], Memory::GetPointerUnchecked(base), 4 * 4);
+			memcpy(&mips->f[inst->dest], space.GetPointerUnchecked(base), 4 * 4);
 			IR_NEXT;
 		}
 		IR_CASE(StoreVec4)
 		{
 			u32 base = mips->r[inst->src1] + inst->constant;
-			memcpy((float *)Memory::GetPointerUnchecked(base), &mips->f[inst->dest], 4 * 4);
+			memcpy((float *)space.GetPointerUnchecked(base), &mips->f[inst->dest], 4 * 4);
 			IR_NEXT;
 		}
+
+		IR_CASE(LoadKernel8)
+			mips->r[inst->dest] = RunKernelLoad<1, false>(mips, mips->r[inst->src1] + inst->constant);
+			IR_NEXT;
+		IR_CASE(LoadKernel8Ext)
+			mips->r[inst->dest] = RunKernelLoad<1, true>(mips, mips->r[inst->src1] + inst->constant);
+			IR_NEXT;
+		IR_CASE(LoadKernel16)
+			mips->r[inst->dest] = RunKernelLoad<2, false>(mips, mips->r[inst->src1] + inst->constant);
+			IR_NEXT;
+		IR_CASE(LoadKernel16Ext)
+			mips->r[inst->dest] = RunKernelLoad<2, true>(mips, mips->r[inst->src1] + inst->constant);
+			IR_NEXT;
+		IR_CASE(LoadKernel32)
+			mips->r[inst->dest] = RunKernelLoad<4, false>(mips, mips->r[inst->src1] + inst->constant);
+			IR_NEXT;
+		IR_CASE(StoreKernel8)
+			RunKernelStore<1>(mips, mips->r[inst->src1] + inst->constant, mips->r[inst->src3]);
+			IR_NEXT;
+		IR_CASE(StoreKernel16)
+			RunKernelStore<2>(mips, mips->r[inst->src1] + inst->constant, mips->r[inst->src3]);
+			IR_NEXT;
+		IR_CASE(StoreKernel32)
+			RunKernelStore<4>(mips, mips->r[inst->src1] + inst->constant, mips->r[inst->src3]);
+			IR_NEXT;
 
 		IR_CASE(Vec4Init)
 		{
@@ -1350,7 +1451,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 			MIPSOpcode op(inst->constant);
 			// HLE runs in the host's normal mode, see ApplyHostRoundingMode.
 			RestoreHostRoundingMode();
-			CallSyscall(op);
+			{
+				Memory::IRInterpreterFaultScope outside(false);
+				CallSyscall(mips, op);
+			}
 			ApplyHostRoundingMode(mips);
 			if (coreState != CORE_RUNNING_CPU) {
 				CoreTiming::ForceCheck(mips);
@@ -1363,7 +1467,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 			// If we get here, the syscall is invalid.
 			u32 pc = inst->constant;
 			RestoreHostRoundingMode();
-			CallSyscallUnresolvedAtPC(pc);
+			{
+				Memory::IRInterpreterFaultScope outside(false);
+				CallSyscallUnresolvedAtPC(mips, pc);
+			}
 			ApplyHostRoundingMode(mips);
 			if (coreState != CORE_RUNNING_CPU) {
 				// hm, what's this for?
@@ -1378,7 +1485,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 		IR_CASE(Interpret)  // SLOW fallback. Can be made faster. Ideally should be removed but may be useful for debugging.
 		{
 			MIPSOpcode op(inst->constant);
-			MIPSInterpret(mips, op);
+			{
+				Memory::IRInterpreterFaultScope outside(false);
+				MIPSInterpret(mips, op);
+			}
 			IR_NEXT;
 		}
 
@@ -1387,7 +1497,11 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, const IRInst *chainArena) {
 			int funcIndex = inst->constant;
 			const ReplacementTableEntry *f = GetReplacementFunc(funcIndex);
 			RestoreHostRoundingMode();
-			int cycles = f->replaceFunc();
+			int cycles;
+			{
+				Memory::IRInterpreterFaultScope outside(false);
+				cycles = f->replaceFunc(mips);
+			}
 			ApplyHostRoundingMode(mips);
 			mips->r[inst->dest] = cycles < 0 ? -1 : 0;
 			mips->downcount -= cycles < 0 ? -cycles : cycles;

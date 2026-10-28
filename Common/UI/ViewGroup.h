@@ -8,6 +8,7 @@
 #include "Common/Math/geom2d.h"
 #include "Common/Input/GestureDetector.h"
 #include "Common/UI/View.h"
+#include "Common/Render/DrawEnum.h"
 
 class UIScreen;
 
@@ -53,11 +54,13 @@ public:
 	template <class T>
 	T *Add(T *view) {
 		views_.push_back(view);
+		SetParentOf(view);
 		return view;
 	}
 	template <class T>
 	T *Insert(int index, T *view) {
 		views_.insert(views_.begin() + index, view);
+		SetParentOf(view);
 		return view;
 	}
 
@@ -108,6 +111,9 @@ protected:
 	std::string DescribeListUnordered(std::string_view heading) const;
 	std::string DescribeListOrdered(std::string_view heading) const;
 
+	// Anything that adds to views_ without Add or Insert must call this.
+	void SetParentOf(View *view) { view->parent_ = this; }
+
 	std::vector<View *> views_;
 	View *defaultFocusView_ = nullptr;
 	Drawable bg_;
@@ -116,15 +122,6 @@ protected:
 	bool clickableBackground_ = false;
 	bool clip_ = false;
 	bool exclusiveTouch_ = false;
-};
-
-// A frame layout contains a single child view (normally).
-// It simply centers the child view.
-class FrameLayout : public ViewGroup {
-public:
-	FrameLayout(LayoutParams *layoutParams = nullptr) : ViewGroup(layoutParams) {}
-	void Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) override;
-	void Layout() override;
 };
 
 constexpr float NONE = -FLT_MAX;
@@ -221,13 +218,29 @@ public:
 	void SetSpacing(float spacing) {
 		spacing_ = spacing;
 	}
+	// Space between the layout's edges and its children, on top of the children's own margins.
+	void SetPadding(const Margins &padding) {
+		padding_ = padding;
+	}
+	// Where the children go along the layout direction when they don't fill it, as a group. Only the
+	// gravity's component along the layout direction is used (G_HCENTER or G_RIGHT when horizontal,
+	// G_VCENTER or G_BOTTOM when vertical). Each child's own gravity still places it across.
+	void SetContentGravity(Gravity gravity) {
+		contentGravity_ = gravity;
+	}
+
+	// Applies rounding to the corners of the child views, based on their position in the layout and the orientation. Masked by the outerCorners.
+	// Note that if the view's spacing is not 0.0f, all views will get the rounded corners since they will appear separate.
+	void ApplyRoundCorners(RoundCorners outerCorners = RoundCorners::All);
+
 	std::string DescribeLog() const override { return (orientation_ == ORIENT_HORIZONTAL ? "LinearLayoutHoriz: " : "LinearLayoutVert: ") + View::DescribeLog(); }
-	Margins padding;
 
 protected:
 	Orientation orientation_;
 private:
 	Margins defaultMargins_;
+	Margins padding_;
+	Gravity contentGravity_ = Gravity::G_TOPLEFT;
 	float spacing_ = 10.0f;
 };
 
@@ -237,18 +250,36 @@ public:
 		: LinearLayout(orientation, layoutParams) {
 	}
 
+	// The only difference with a LinearLayout is the DescribeText, which is a list of the items in the layout.
+	// Not sure if we really need this.
 	std::string DescribeText() const override;
 };
 
-// GridLayout is a little different from the Android layout. This one has fixed size
-// rows and columns. Items are not allowed to deviate from the set sizes.
-// Initially, only horizontal layout is supported.
-struct GridLayoutSettings {
-	GridLayoutSettings() : orientation(ORIENT_HORIZONTAL), columnWidth(100), rowHeight(50), spacing(5), fillCells(false) {}
-	GridLayoutSettings(int colW, int colH, int spac = 5)
-		: orientation(ORIENT_HORIZONTAL), columnWidth(colW), rowHeight(colH), spacing(spac), fillCells(false) {}
+// These are pretty vertical LinearLayout, with a title and a roundrect background.
+// They have no margins: put them in a ChoiceGroupList, or another layout that spaces them out.
+class ChoiceGroup : public LinearLayout {
+public:
+	ChoiceGroup(std::string_view title = "", LayoutParams *layoutParams = nullptr);
 
-	Orientation orientation;
+	void Draw(UIContext &dc) override;
+
+private:
+	std::string title_;
+};
+
+// A vertical list that spaces out the ChoiceGroups in it and keeps them off its edges.
+class ChoiceGroupList : public LinearLayoutList {
+public:
+	ChoiceGroupList(LayoutParams *layoutParams = nullptr);
+};
+
+// GridLayout is a little different from the Android layout. This one has fixed size
+// rows and columns, filled row by row. Items are not allowed to deviate from the set sizes.
+struct GridLayoutSettings {
+	GridLayoutSettings() : columnWidth(100), rowHeight(50), spacing(5), fillCells(false) {}
+	GridLayoutSettings(int colW, int colH, int spac = 5)
+		: columnWidth(colW), rowHeight(colH), spacing(spac), fillCells(false) {}
+
 	int columnWidth;
 	int rowHeight;
 	int spacing;
@@ -262,8 +293,12 @@ public:
 	explicit GridLayoutParams(Gravity grav)
 		: LayoutParams(LP_GRID), gravity(grav) {
 	}
+	GridLayoutParams(Gravity grav, const Margins &mgn)
+		: LayoutParams(LP_GRID), gravity(grav), margins(mgn) {
+	}
 
 	Gravity gravity;
+	Margins margins;
 
 	static LayoutParamsType StaticType() {
 		return LP_GRID;
@@ -278,8 +313,14 @@ public:
 	void Layout() override;
 	std::string DescribeLog() const override { return "GridLayout: " + View::DescribeLog(); }
 
+	// Space between the layout's edges and the cells.
+	void SetPadding(const Margins &padding) {
+		padding_ = padding;
+	}
+
 private:
 	GridLayoutSettings settings_;
+	Margins padding_;
 	int numColumns_ = 1;
 };
 

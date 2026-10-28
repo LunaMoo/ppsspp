@@ -76,6 +76,11 @@ void GPUCommon::BeginHostFrame(const DisplayLayoutConfig &config) {
 	UpdateMSAALevel(draw_);
 	CheckConfigChanged(config);
 	CheckDisplayResized();
+	// Skip Buffer Effects only takes effect on a render resize, and not everything that changes it posts one
+	// (turning on Auto FrameSkip clears it).
+	if (framebufferManager_ && framebufferManager_->UseBufferedRendering() == g_Config.bSkipBufferEffects) {
+		renderResized_ = true;
+	}
 	CheckRenderResized(config);
 
 	// After the resizes, which ask for the post shaders to be rebuilt at the new size.
@@ -261,7 +266,30 @@ bool GPUCommon::IsVideo(u32 addr) const {
 	return false;
 }
 
-void GPUCommon::NoteVideoRange(u32 addr, u32 size) {
+u32 GPUCommon::VideoBytesFrom(u32 addr) const {
+	addr &= 0x3FFFFFFF;
+	u32 bytes = 0;
+	for (const VideoInfo &info : videos_) {
+		if (addr >= info.addr && addr < info.addr + info.size) {
+			bytes = std::max(bytes, info.addr + info.size - addr);
+		}
+	}
+	return bytes;
+}
+
+u32 GPUCommon::VideoRowBytesFrom(u32 addr, u32 rowBytes) const {
+	addr &= 0x3FFFFFFF;
+	u32 covered = 0;
+	for (const VideoInfo &info : videos_) {
+		// The frames that start in the first row, which strips converted side by side do.
+		if (info.rowBytes != 0 && info.addr >= addr && info.addr < addr + rowBytes) {
+			covered = std::max(covered, info.addr - addr + info.rowBytes);
+		}
+	}
+	return covered;
+}
+
+void GPUCommon::NoteVideoRange(u32 addr, u32 size, u32 rowBytes) {
 	addr &= 0x3FFFFFFF;
 	// A game blits its video frame every displayed frame while waiting for the next one, so the
 	// same few buffers arrive over and over. Refresh the one we already have rather than stacking
@@ -270,10 +298,11 @@ void GPUCommon::NoteVideoRange(u32 addr, u32 size) {
 		if (info.addr == addr) {
 			info.size = size;
 			info.flips = gpuStats.totals.numFlips;
+			info.rowBytes = rowBytes;
 			return;
 		}
 	}
-	videos_.push_back({ addr, size, gpuStats.totals.numFlips });
+	videos_.push_back({ addr, size, gpuStats.totals.numFlips, rowBytes });
 }
 
 // So the list doesn't grow unboundedly, and a buffer reused for something else once the movie is
@@ -516,7 +545,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 	// Check alignment
 	// TODO Check the context and stack alignement too
 	if (((listpc | stall) & 3) != 0 || !Memory::IsValidAddress(listpc)) {
-		ERROR_LOG_REPORT(Log::G3D, "sceGeListEnqueue: invalid address %08x", listpc);
+		ERROR_LOG(Log::G3D, "sceGeListEnqueue: invalid address %08x", listpc);
 		return SCE_KERNEL_ERROR_INVALID_POINTER;
 	}
 
@@ -1220,7 +1249,7 @@ void GPUCommon::Execute_Ret(u32 op, u32 diff) {
 		currentList->pc = target - 4;
 #ifdef _DEBUG
 		if (!Memory::IsValidAddress(currentList->pc)) {
-			ERROR_LOG_REPORT(Log::G3D, "Invalid DL PC %08x on return", currentList->pc);
+			ERROR_LOG(Log::G3D, "Invalid DL PC %08x on return", currentList->pc);
 			UpdateState(GPUSTATE_ERROR);
 		}
 #endif
@@ -1302,7 +1331,7 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 					}
 
 					if (!Memory::IsValidAddress(target)) {
-						ERROR_LOG_REPORT(Log::G3D, "Signal with Jump (%s): bad address. signal/end: %04x %04x", targetType, signal, enddata);
+						ERROR_LOG(Log::G3D, "Signal with Jump (%s): bad address. signal/end: %04x %04x", targetType, signal, enddata);
 						UpdateState(GPUSTATE_ERROR);
 					} else {
 						UpdatePC(currentList->pc, target);
@@ -1329,9 +1358,9 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 					}
 
 					if (currentList->stackptr == ARRAY_SIZE(currentList->stack)) {
-						ERROR_LOG_REPORT(Log::G3D, "Signal with Call (%s): stack full. signal/end: %04x %04x", targetType, signal, enddata);
+						ERROR_LOG(Log::G3D, "Signal with Call (%s): stack full. signal/end: %04x %04x", targetType, signal, enddata);
 					} else if (!Memory::IsValidAddress(target)) {
-						ERROR_LOG_REPORT(Log::G3D, "Signal with Call (%s): bad address. signal/end: %04x %04x", targetType, signal, enddata);
+						ERROR_LOG(Log::G3D, "Signal with Call (%s): bad address. signal/end: %04x %04x", targetType, signal, enddata);
 						UpdateState(GPUSTATE_ERROR);
 					} else {
 						// TODO: This might save/restore other state...
@@ -1350,7 +1379,7 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 					trigger = false;
 					currentList->signal = behaviour;
 					if (currentList->stackptr == 0) {
-						ERROR_LOG_REPORT(Log::G3D, "Signal with Return: stack empty. signal/end: %04x %04x", signal, enddata);
+						ERROR_LOG(Log::G3D, "Signal with Return: stack empty. signal/end: %04x %04x", signal, enddata);
 					} else {
 						// TODO: This might save/restore other state...
 						auto &stackEntry = currentList->stack[--currentList->stackptr];
@@ -1363,7 +1392,7 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 				}
 				break;
 			default:
-				ERROR_LOG_REPORT(Log::G3D, "UNKNOWN Signal UNIMPLEMENTED %i ! signal/end: %04x %04x", behaviour, signal, enddata);
+				ERROR_LOG(Log::G3D, "UNKNOWN Signal UNIMPLEMENTED %i ! signal/end: %04x %04x", behaviour, signal, enddata);
 				break;
 			}
 			// TODO: Technically, jump/call/ret should generate an interrupt, but before the pc change maybe?
@@ -1953,7 +1982,7 @@ struct DisplayList_v2 {
 };
 
 void GPUCommon::DoState(PointerWrap &p) {
-	auto s = p.Section("GPUCommon", 1, 7);
+	auto s = p.Section("GPUCommon", 1, 8);
 	if (!s)
 		return;
 
@@ -2056,9 +2085,26 @@ void GPUCommon::DoState(PointerWrap &p) {
 
 	if (s >= 5) {
 		Do(p, matrixVisible.all);
+	} else if (p.mode == PointerWrap::MODE_READ) {
+		ResetMatrices();
 	}
 	if (s >= 6) {
 		Do(p, edramTranslation_);
+	} else if (p.mode == PointerWrap::MODE_READ) {
+		edramTranslation_ = 0x400;
+	}
+	// Which slot (and so which id) the next list gets. Older states start over at 0, rather than
+	// carry on from the session before the load.
+	if (s >= 8) {
+		Do(p, nextListID);
+	} else {
+		nextListID = 0;
+	}
+	if (p.mode == PointerWrap::MODE_READ) {
+		if (nextListID < 0 || nextListID > DisplayListMaxCount) {
+			nextListID = 0;
+		}
+		recorder_.RestartAfterLoad();
 	}
 }
 
@@ -2640,7 +2686,7 @@ bool GPUCommon::PerformWriteColorFromMemory(u32 dest, int size) {
 }
 
 void GPUCommon::PerformWriteFormattedFromMemory(u32 addr, int size, int frameWidth, GEBufferFormat format, int rectWidth) {
-	NoteVideoRange(addr, (u32)size);
+	NoteVideoRange(addr, (u32)size, (u32)(rectWidth * BufferFormatBytesPerPixel(format)));
 	if (Memory::IsVRAMAddress(addr)) {
 		framebufferManager_->PerformWriteFormattedFromMemory(addr, size, frameWidth, format, rectWidth);
 	}

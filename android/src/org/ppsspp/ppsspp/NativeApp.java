@@ -5,6 +5,7 @@ import android.util.Log;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.MotionEvent;
+import android.view.Surface;
 
 import androidx.annotation.RequiresApi;
 
@@ -45,6 +46,13 @@ public class NativeApp {
 	// but the swapchain still has to be recreated, for the pre-rotation.
 	public static native void backbufferResize(int bufferWidth, int bufferHeight, int rotation);
 
+	// A second display, like a TV, that the game is shown on. addOutput returns the output's id, or 0.
+	// removeOutput returns once the native side is done with the surface.
+	public static native int addOutput(Surface surface, int width, int height);
+	public static native void resizeOutput(int id, int width, int height);
+	public static native void removeOutput(int id);
+	public static native void setDeviceName(String name);
+
 	public static native boolean isAtTopLevel();
 
 	// These have Android semantics: Resume is always called on bootup, after init
@@ -65,6 +73,7 @@ public class NativeApp {
 	public static native void touch(float x, float y, int data, int pointerId);
 
 	public static native void accelerometer(float x, float y, float z);
+	public static native void gyroscope(float x, float y, float z, long timestampNs);
 
 	public static native void mouse(float x, float y, int button, int action);
 	public static native void mouseDelta(float x, float y);
@@ -73,6 +82,12 @@ public class NativeApp {
 	public static native void setAchievementsHostOverride(String host);
 	public static native void clearAchievementsHostOverride();
 	public static native String queryConfig(String queryName);
+	// The content URIs that the recent list, the remembered shortcuts and the settings still point at.
+	// Null if the config in memory may not be the user's (see HaveUsersConfig).
+	public static native String[] getReferencedUris();
+	// Remembers these as home screen shortcut targets, oldest first, and saves the config. Only call during
+	// Initialize. False if that didn't work out.
+	public static native boolean addShortcutUris(String[] uris);
 
 	public static native int getSelectedCamera();
 	public static native int getDisplayFramerateMode();

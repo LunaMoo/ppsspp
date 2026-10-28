@@ -51,8 +51,6 @@
 
 // If a texture hasn't been seen for this many frames, get rid of it.
 #define TEXTURE_KILL_AGE 200
-#define TEXTURE_KILL_AGE_LOWMEM 60
-// Not used in lowmem mode.
 #define TEXTURE_SECOND_KILL_AGE 100
 // Used when there are multiple CLUT variants of a texture, to avoid blowing up memory. See #10418
 // We should change this to do shader-based palette expansion.
@@ -63,8 +61,10 @@
 // Try to be prime to other decimation intervals.
 #define TEXCACHE_DECIMATION_INTERVAL 13
 
-#define TEXCACHE_MIN_PRESSURE 16 * 1024 * 1024  // Total in VRAM
-#define TEXCACHE_SECOND_MIN_PRESSURE 4 * 1024 * 1024
+// Below these sizes (in host memory, see EstimateTexMemoryUsage) nothing is evicted. Above them, textures
+// that haven't been used for the kill age are. A single 2048x2048 replacement is 16MB.
+#define TEXCACHE_MIN_PRESSURE 128 * 1024 * 1024
+#define TEXCACHE_SECOND_MIN_PRESSURE 32 * 1024 * 1024
 
 static bool MatchFramebuffer(const TextureDefinition &entry, VirtualFramebuffer *framebuffer, u32 texaddrOffset, RasterChannel channel, bool useBufferedRendering, FramebufferMatchInfo *matchInfo);
 static bool GetBestFramebufferCandidate(FramebufferManagerCommon *fbManager, const TextureDefinition &entry, u32 texAddrOffset, AttachCandidate *bestCandidate, const char *context);
@@ -265,8 +265,9 @@ SamplerCacheKey TextureCacheCommon::GetSamplingParams(int maxLevel, const TexCac
 	bool useReplacerFiltering = false;
 	// (Not for indices that the shader colors, filtering them would mix up the palette entries.)
 	if (entry && replacer_.Enabled() && entry->replacedTexture && !(entry->status & TexStatus::CLUT8_INDEXED)) {
-		// If replacement textures have multiple mip levels, enforce mip filtering.
-		if (entry->replacedTexture->State() == ReplacementState::ACTIVE && entry->replacedTexture->NumLevels() > 1) {
+		// If replacement textures have multiple mip levels, enforce mip filtering. Not if only one got
+		// uploaded, as with a fake mipmap change.
+		if (entry->replacedTexture->State() == ReplacementState::ACTIVE && entry->replacedTexture->NumLevels() > 1 && !(entry->status & TexStatus::NO_MIPS)) {
 			key.mipEnable = true;
 			key.mipFilt = 1;
 			key.maxLevel = 9 * 256;
@@ -646,11 +647,15 @@ TextureApplyResult TextureCacheCommon::ApplyTexture(bool doBind) {
 			reason = "scaling";
 		}
 
-		if (match && (entry->status & TexStatus::TO_REPLACE) && replacementTimeThisFrame_ < replacementFrameBudgetSeconds_) {
+		if (match && (entry->status & TexStatus::TO_REPLACE)) {
 			int w0 = gstate.getTextureWidth(0);
 			int h0 = gstate.getTextureHeight(0);
 			int d0 = 1;
 			if (entry->replacedTexture) {
+				// Polling is cheap, so it's done every time. Only rebuilding the texture waits for the frame's
+				// budget, otherwise whatever used up the budget early in each frame could keep the textures
+				// drawn after it from ever getting their replacements.
+				const bool canRebuild = replacementTimeThisFrame_ < replacementFrameBudgetSeconds_;
 				PollReplacement(entry, &w0, &h0, &d0);
 				// This texture is pending a replacement load.
 				// So check the replacer if it's reached a conclusion.
@@ -660,16 +665,24 @@ TextureApplyResult TextureCacheCommon::ApplyTexture(bool doBind) {
 					DEBUG_LOG(Log::TexReplacement, "No replacement for texture %dx%d", w0, h0);
 					entry->status &= ~TexStatus::TO_REPLACE;
 					if (g_Config.bSaveNewTextures) {
-						// Load it once more to actually save it. Since we don't set STATUS_TO_REPLACE, we won't end up looping.
-						match = false;
-						reason = "replacing";
+						if (canRebuild) {
+							// Load it once more to actually save it. Since we don't set STATUS_TO_REPLACE, we won't end up looping.
+							match = false;
+							reason = "replacing";
+						} else {
+							entry->status |= TexStatus::TO_REPLACE;
+						}
 					}
 					break;
 				case ReplacementState::ACTIVE:
 					// There is now replacement data available!
-					// Just reload the texture to process the replacement.
-					match = false;
-					reason = "replacing";
+					// Just reload the texture to process the replacement, or try again next time.
+					if (canRebuild) {
+						match = false;
+						reason = "replacing";
+					} else {
+						entry->status |= TexStatus::TO_REPLACE;
+					}
 					break;
 				default:
 					// We'll just wait for a result.
@@ -965,10 +978,20 @@ TextureApplyResult TextureCacheCommon::ApplyTextureFinish(TexCacheEntry *entry, 
 	const bool isVideo = (entry->status & TexStatus::VIDEO) != 0;
 	gstate_c.SetTextureIsVideo(isVideo);
 	if (isVideo) {
-		// Restrict sampling to the 480x272 frame (see CalcTexClamp), since with the forced linear
+		// Restrict sampling to the frame (see CalcTexClamp), since with the forced linear
 		// filtering, whatever is next to it in memory bleeds in at the edges.
 		gstate_c.curTextureXOffset = 0;
 		gstate_c.curTextureYOffset = 0;
+		const u32 bytesPerPixel = textureBitsPerPixel[entry->format] / 8;
+		const u32 rowBytes = (u32)entry->bufw * bytesPerPixel;
+		const int videoRows = rowBytes ? (int)(gpu->VideoBytesFrom(entry->addr) / rowBytes) : 0;
+		const int videoColumns = bytesPerPixel ? (int)(gpu->VideoRowBytesFrom(entry->addr, rowBytes) / bytesPerPixel) : 0;
+		if (videoRows != gstate_c.videoRows || videoColumns != gstate_c.videoColumns) {
+			gstate_c.videoRows = videoRows;
+			gstate_c.videoColumns = videoColumns;
+			// The clamp, and whether the shader clamps or wraps, depend on it.
+			gstate_c.Dirty(DIRTY_TEXCLAMP | DIRTY_FRAGMENTSHADER_STATE);
+		}
 		gstate_c.SetNeedShaderTexclamp(true);
 	}
 	gstate_c.SetTextureIsArray(false);  // Ordinary 2D textures still aren't used by array view in VK. We probably might as well, though, at this point..
@@ -1725,9 +1748,12 @@ bool TextureCacheCommon::GetCurrentClutBuffer(GPUDebugBuffer &buffer) {
 	return true;
 }
 
-// Host memory usage, not PSP memory usage.
+// Host memory usage, not PSP memory usage. Level 0 only.
 u32 TexCacheEntry::EstimateTexMemoryUsage() const {
-	// TODO: This does not take into account the HD remaster's larger textures.
+	return hostMemorySize != 0 ? hostMemorySize : EstimatePSPSizeMemoryUsage();
+}
+
+u32 TexCacheEntry::EstimatePSPSizeMemoryUsage() const {
 	const u8 dimW = ((dim >> 0) & 0xf);
 	const u8 dimH = ((dim >> 8) & 0xf);
 
@@ -1916,7 +1942,7 @@ static TextureAlpha DecodeDXTBlocks(uint8_t *out, int outPitch, uint32_t texaddr
 	const uint32_t neededBlocks = SourceExtent(rowBlocks, blocksPerRow, blockRows);
 
 	if (!Memory::IsValidRange(texaddr, neededBlocks * sizeof(DXTBlock))) {
-		ERROR_LOG_REPORT(Log::TexCache, "DXT%d texture extends beyond valid RAM: %08x + %d x %d (w=%d)", n, texaddr, bufw, h, w);
+		ERROR_LOG(Log::TexCache, "DXT%d texture extends beyond valid RAM: %08x + %d x %d (w=%d)", n, texaddr, bufw, h, w);
 		const uint32_t limited = Memory::ClampValidSizeAt(texaddr, neededBlocks * sizeof(DXTBlock));
 		// Drop block rows until the last one's blocks fit too. This might land on 0, but try to
 		// decode what we can (might even be how the PSP behaves.)
@@ -2044,7 +2070,7 @@ TextureAlpha TextureCacheCommon::DecodeTextureLevel(u8 *out, int outPitch, GETex
 	const uint32_t rows = swizzled ? ((h + 7) & ~7) : h;
 	const uint32_t neededBytes = (bpp * SourceExtent(w, bufw, rows) + 7) / 8;
 	if (bytesPerRow > 0 && !isPPGE && !Memory::IsValidRange(texaddr, neededBytes)) {
-		ERROR_LOG_REPORT(Log::TexCache, "Texture extends beyond valid RAM: %08x + %d x %d (w=%d)", texaddr, bufw, h, w);
+		ERROR_LOG(Log::TexCache, "Texture extends beyond valid RAM: %08x + %d x %d (w=%d)", texaddr, bufw, h, w);
 		const uint32_t limited = Memory::ClampValidSizeAt(texaddr, neededBytes);
 		// Drop rows until the last one's w texels fit too, not just its bufw stride.
 		const uint32_t availableTexels = (limited * 8) / bpp;
@@ -2773,6 +2799,10 @@ void TextureCacheCommon::Clear(bool delete_them) {
 		secondCache_.clear();
 	}
 
+	ReleaseDynamicClut();
+}
+
+void TextureCacheCommon::ReleaseDynamicClut() {
 	if (dynamicClutFbo_) {
 		dynamicClutFbo_->Release();
 		dynamicClutFbo_ = nullptr;
@@ -2781,8 +2811,17 @@ void TextureCacheCommon::Clear(bool delete_them) {
 		dynamicClutTemp_->Release();
 		dynamicClutTemp_ = nullptr;
 	}
-	// The dynamic CLUT lived in the framebuffers released above. Fall back to the RAM copy until the next LoadClut.
+	// The dynamic CLUT lived in framebuffers that are going away. Fall back to the RAM copy until the next LoadClut.
 	clutRenderAddress_ = 0xFFFFFFFF;
+}
+
+void TextureCacheCommon::RecheckAllAfterLoad() {
+	// Decoding them all again stutters, while hashing finds the ones that are still the same. The
+	// secondary cache is keyed by hash, so it's fine as it is.
+	for (auto &iter : cache_) {
+		iter.second->status |= TexStatus::HASH_RECHECK;
+	}
+	ReleaseDynamicClut();
 }
 
 // One type of texture update can happen without the involvement of the CPU: Block transfers.
@@ -3093,6 +3132,14 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 		SaveIndexedTexture(entry, plan);
 	}
 
+	// A replacement or upscaled texture takes many times the PSP size, and the decimation in
+	// Decimate() goes by this.
+	if (plan.doReplace) {
+		entry->hostMemorySize = plan.replaced->GetLevelDataSizeAfterCopy(0);
+	} else {
+		entry->hostMemorySize = entry->EstimatePSPSizeMemoryUsage() * plan.scaleFactor * plan.scaleFactor * plan.depth;
+	}
+
 	// Will be filled in again during decode.
 	entry->SetAlphaStatus(TextureAlpha::Any);
 	return true;
@@ -3199,16 +3246,20 @@ void TextureCacheCommon::LoadTextureLevel(TexCacheEntry &entry, uint8_t *data, s
 
 	PROFILE_THIS_SCOPE("decodetex");
 
+	// Replacements and dumps go by the level of the texture we create. With a fake mipmap change,
+	// its level 0 comes from PSP level baseLevelSrc.
+	const int dstLevel = srcLevel - plan.baseLevelSrc;
+
 	if (plan.doReplace) {
-		plan.replaced->GetSize(srcLevel, &w, &h);
+		plan.replaced->GetSize(dstLevel, &w, &h);
 		double replaceStart = time_now_d();
 		if (plan.decodeToClut8) {
 			// Only an indexed replacement for the GPU gets here. The indices go up as they are, as an R8 image.
-			plan.replaced->CopyIndexLevelToPitched(srcLevel, data, dataSize, stride);
+			plan.replaced->CopyIndexLevelToPitched(dstLevel, data, dataSize, stride);
 		} else if (plan.replaced->IsIndexed()) {
-			CopyIndexedReplacementLevel(plan.replaced, srcLevel, data, dataSize, stride);
+			CopyIndexedReplacementLevel(plan.replaced, dstLevel, data, dataSize, stride);
 		} else {
-			plan.replaced->CopyLevelTo(srcLevel, data, dataSize, stride);
+			plan.replaced->CopyLevelTo(dstLevel, data, dataSize, stride);
 		}
 		replacementTimeThisFrame_ += time_now_d() - replaceStart;
 	} else {
@@ -3268,7 +3319,7 @@ void TextureCacheCommon::LoadTextureLevel(TexCacheEntry &entry, uint8_t *data, s
 			replacedInfo.fmt = dstFmt;
 
 			// NOTE: Reading the decoded texture here may be very slow, if we just wrote it to write-combined memory.
-			replacer_.NotifyTextureDecoded(plan.replaced, replacedInfo, pixelData, decPitch, srcLevel, w, h, scaledW, scaledH);
+			replacer_.NotifyTextureDecoded(plan.replaced, replacedInfo, pixelData, decPitch, dstLevel, w, h, scaledW, scaledH);
 		}
 	}
 }

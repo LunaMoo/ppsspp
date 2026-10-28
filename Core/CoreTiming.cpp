@@ -33,6 +33,7 @@
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/__sceAudio.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/MIPS/MeCore.h"
 
 static const int initialHz = 222000000;
 int CPU_HZ = 222000000;
@@ -44,6 +45,8 @@ int CPU_HZ = 222000000;
 namespace CoreTiming {
 
 static std::vector<EventType> event_types;
+// Far more than ever registered. Counts and ids from a savestate are checked against it.
+static constexpr int MAX_EVENT_TYPES = 4096;
 // Only used during restore.
 static std::set<int> usedEventTypes;
 static std::set<int> restoredEventTypes;
@@ -55,6 +58,8 @@ static Event *eventPool = 0;
 // Downcount has been moved to currentMIPS, to save a couple of clocks in every ARM JIT block
 // as we can already reach that structure through a register.
 int slicelength;
+// How much of the current slice the other CPUs have already run (CatchUpOtherCPUs).
+static int otherCPUsRan = 0;
 
 alignas(16) static s64 globalTimer;
 static s64 idledCycles;
@@ -189,6 +194,9 @@ void RestoreRegisterEvent(int &event_type, const char *name, TimedCallback callb
 	// Some old states have a duplicate restore, do our best to fix...
 	if (restoredEventTypes.count(event_type) != 0)
 		event_type = -1;
+	// Straight from the file, so don't let a bogus id size the table.
+	if (event_type < -1 || event_type >= MAX_EVENT_TYPES)
+		event_type = -1;
 	if (event_type == -1)
 		event_type = nextEventTypeRestoreId++;
 	if (event_type >= (int)event_types.size()) {
@@ -212,6 +220,7 @@ void UnregisterAllEvents() {
 void Init(MIPSState *mips) {
 	mips->downcount = INITIAL_SLICE_LENGTH;
 	slicelength = INITIAL_SLICE_LENGTH;
+	otherCPUsRan = 0;
 	globalTimer = 0;
 	idledCycles = 0;
 	lastGlobalTimeTicks = 0;
@@ -408,8 +417,25 @@ void ProcessEvents() {
 	}
 }
 
+// The Media Engine catches up with the main CPU.
+static void RunOtherCPUs(int cycles) {
+	if (MeCore::g_meState) {
+		MeCore::RunFor(cycles - otherCPUsRan);
+	}
+	otherCPUsRan = 0;
+}
+
+void CatchUpOtherCPUs(MIPSState *mips) {
+	const int ran = slicelength - mips->downcount;
+	if (MeCore::g_meState && ran > otherCPUsRan) {
+		MeCore::RunFor(ran - otherCPUsRan);
+		otherCPUsRan = ran;
+	}
+}
+
 void ForceCheck(MIPSState *mips) {
 	int cyclesExecuted = slicelength - mips->downcount;
+	RunOtherCPUs(cyclesExecuted);
 	globalTimer += cyclesExecuted;
 	// This will cause us to check for new events immediately.
 	mips->downcount = -1;
@@ -424,6 +450,7 @@ void ForceCheck(MIPSState *mips) {
 void Advance(MIPSState *mips) {
 	PROFILE_THIS_SCOPE("advance");
 	int cyclesExecuted = slicelength - mips->downcount;
+	RunOtherCPUs(cyclesExecuted);
 	globalTimer += cyclesExecuted;
 	mips->downcount = slicelength;
 
@@ -538,10 +565,17 @@ void DoState(PointerWrap &p) {
 	auto s = p.Section("CoreTiming", 1, 3);
 	if (!s)
 		return;
+	// States are saved between slices.
+	otherCPUsRan = 0;
 
 	int n = (int)event_types.size();
 	int current = n;
 	Do(p, n);
+	if (n < 0 || n > MAX_EVENT_TYPES) {
+		ERROR_LOG(Log::SaveState, "Savestate failure: implausible event type count %d", n);
+		p.SetError(p.ERROR_FAILURE);
+		return;
+	}
 	if (n > current) {
 		if (p.mode != PointerWrap::MODE_READ) {
 			WARN_LOG(Log::SaveState, "Savestate failure: more events than current");
@@ -579,6 +613,13 @@ void DoState(PointerWrap &p) {
 	}
 
 	Do(p, CPU_HZ);
+	if (CPU_HZ <= 0) {
+		// Everything divides by it.
+		ERROR_LOG(Log::SaveState, "Savestate failure: bad CPU frequency %d", (int)CPU_HZ);
+		p.SetError(p.ERROR_FAILURE);
+		CPU_HZ = 222000000;
+		return;
+	}
 	Do(p, slicelength);
 	Do(p, globalTimer);
 	Do(p, idledCycles);

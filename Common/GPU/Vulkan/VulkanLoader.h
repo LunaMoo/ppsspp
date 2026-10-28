@@ -18,6 +18,7 @@
 #pragma once
 
 #include "ppsspp_config.h"
+#include "Common/GPU/Vulkan/VulkanDriverVars.h"
 
 #if PPSSPP_PLATFORM(ANDROID)
 #define VK_USE_PLATFORM_ANDROID_KHR
@@ -32,8 +33,9 @@
 #endif
 
 // The iOS app links MoltenVK statically and calls Vulkan directly. Everywhere else (including the
-// iOS libretro core), we load the functions at runtime into the pointers below.
-#if PPSSPP_PLATFORM(IOS) && !defined(__LIBRETRO__)
+// iOS libretro core), we load the functions at runtime into the pointers below. The simulator build
+// has no MoltenVK at all (it uses Metal), so it takes the runtime path, which finds no library.
+#if PPSSPP_PLATFORM(IOS) && !PPSSPP_PLATFORM(IOS_SIMULATOR) && !defined(__LIBRETRO__)
 #define PPSSPP_VK_STATIC 1
 #else
 #define VK_NO_PROTOTYPES
@@ -284,6 +286,8 @@ struct VulkanExtensions {
 	bool EXT_full_screen_exclusive;
 	// bool EXT_depth_range_unrestricted;  // Allows depth outside [0.0, 1.0] in 32-bit float depth buffers.
 };
+
+void VulkanApplyCustomDriverEnvVars(AdrenoEnvVar envVars);
 
 // Way to do a quick check before even attempting to load.
 void VulkanSetNativeLibDir(std::string_view nativeLibDir);

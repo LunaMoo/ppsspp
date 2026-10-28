@@ -24,6 +24,7 @@
 #include "Core/HLE/HLETables.h"
 
 #include "Core/MIPS/MIPS.h"
+#include "Core/MIPS/MeCore.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPSTables.h"
@@ -358,9 +359,10 @@ void IRFrontend::Comp_Jump(MIPSOpcode op) {
 	u32 targetAddr = (GetCompilerPC() & 0xF0000000) | off;
 
 	// Might be a stubbed address or something?
-	if (!Memory::IsValidAddress(targetAddr)) {
+	if (space_ ? !space_->IsValidAddress(targetAddr) : !Memory::IsValidAddress(targetAddr)) {
 		// If preloading, flush - this block will likely be fixed later.
-		ERROR_LOG(Log::JIT, "Jump to invalid address: %08x", targetAddr);
+		// Usually code that never runs, like a call through an import that isn't linked yet.
+		DEBUG_LOG(Log::JIT, "Compiled jump to %08x (probably benign)", targetAddr);
 		// TODO: Mark this block dirty or something?  May be indication it will be changed by imports.
 		// Continue so the block gets completed and crashes properly.
 	}
@@ -409,9 +411,13 @@ void IRFrontend::Comp_JumpReg(MIPSOpcode op) {
 	if (andLink && rs == rd)
 		delaySlotIsNice = false;
 
+	// The CPUs ignore the target's low two bits (tests/cpu/jump/unaligned). Sony's ME firmware keeps
+	// flags there in its command table, and calls the entries as they are, and the PS1 emulator returns
+	// through such an address.
 	int destReg;
 	if (IsSyscall(delaySlotOp)) {
-		ir.Write(IROp::SetPC, 0, rs);
+		ir.Write(IROp::AndConst, IRTEMP_LHS, rs, 0, ~3U);
+		ir.Write(IROp::SetPC, 0, IRTEMP_LHS);
 		if (andLink)
 			ir.WriteSetConstant(rd, GetCompilerPC() + 8);
 		CompileDelaySlot();
@@ -424,11 +430,13 @@ void IRFrontend::Comp_JumpReg(MIPSOpcode op) {
 		if (andLink)
 			ir.WriteSetConstant(rd, GetCompilerPC() + 8);
 		CompileDelaySlot();
-		destReg = rs;  // Safe because FlushAll doesn't change any regs
+		// Safe because the delay slot doesn't change rs.
+		ir.Write(IROp::AndConst, IRTEMP_LHS, rs, 0, ~3U);
+		destReg = IRTEMP_LHS;
 		FlushAll();
 	} else {
 		// Bad delay slot.
-		ir.Write(IROp::Mov, IRTEMP_LHS, rs);
+		ir.Write(IROp::AndConst, IRTEMP_LHS, rs, 0, ~3U);
 		destReg = IRTEMP_LHS;
 		if (andLink)
 			ir.WriteSetConstant(rd, GetCompilerPC() + 8);
@@ -459,6 +467,24 @@ void IRFrontend::Comp_JumpReg(MIPSOpcode op) {
 }
 
 void IRFrontend::Comp_Syscall(MIPSOpcode op) {
+	if (IsMediaEngine()) {
+		// There's no HLE on the ME. A call to a stub that does nothing there returns 0, ending the
+		// block as a syscall does on the main CPU (a jr with it in its delay slot leaves the exit to
+		// it); the interpreter traps the rest.
+		if (!MeCore::SyscallDoesNothing(op, GetCompilerPC())) {
+			Comp_Generic(op);
+			return;
+		}
+		ir.Write(IROp::Downcount, 0, 0, 0, js.downcountAmount);
+		js.downcountAmount = 0;
+		if (!js.inDelaySlot)
+			ir.Write(IROp::SetPCConst, 0, 0, 0, GetCompilerPC() + 4);
+		ir.WriteSetConstant(MIPS_REG_V0, 0);
+		FlushAll();
+		ir.Write(IROp::ExitToPC);
+		js.compiling = false;
+		return;
+	}
 	// Like the interpreter, the syscall sees every earlier instruction charged (including a branch it's
 	// the delay slot of) but not itself, which is charged once it returns.
 	const int syscallCycles = MIPSGetInstructionCycleEstimate(op);

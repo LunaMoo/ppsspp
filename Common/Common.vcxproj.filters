@@ -698,6 +698,9 @@
     <ClInclude Include="Render\AtlasGen.h">
       <Filter>Render</Filter>
     </ClInclude>
+    <ClInclude Include="Render\DropShadow.h">
+      <Filter>Render</Filter>
+    </ClInclude>
     <ClInclude Include="..\ext\nanosvg\src\nanosvg.h">
       <Filter>ext\nanosvg</Filter>
     </ClInclude>
@@ -729,6 +732,18 @@
       <Filter>ext\aemu_postoffice</Filter>
     </ClInclude>
     <ClInclude Include="..\ext\aemu_postoffice\client\sock_impl.h">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\aemu_postoffice\client\list.h">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\aemu_postoffice\client\enet.h">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl.h">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl_mem.h">
       <Filter>ext\aemu_postoffice</Filter>
     </ClInclude>
     <ClInclude Include="UI\Notice.h">
@@ -802,6 +817,12 @@
     </ClInclude>
     <ClInclude Include="UI\ScreenManager.h">
       <Filter>UI</Filter>
+    </ClInclude>
+    <ClInclude Include="Render\DrawEnum.h">
+      <Filter>Render</Filter>
+    </ClInclude>
+    <ClInclude Include="GPU\Vulkan\VulkanDriverVars.h">
+      <Filter>GPU\Vulkan</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -1405,6 +1426,9 @@
     <ClCompile Include="Render\AtlasGen.cpp">
       <Filter>Render</Filter>
     </ClCompile>
+    <ClCompile Include="Render\DropShadow.cpp">
+      <Filter>Render</Filter>
+    </ClCompile>
     <ClCompile Include="UI\TabHolder.cpp">
       <Filter>UI</Filter>
     </ClCompile>
@@ -1424,6 +1448,18 @@
       <Filter>ext\aemu_postoffice</Filter>
     </ClCompile>
     <ClCompile Include="..\ext\aemu_postoffice\client\sock_impl_windows.c">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\list.c">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\client\enet.c">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl.c">
+      <Filter>ext\aemu_postoffice</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ext\aemu_postoffice\adhocctl\client\adhocctl_mem.c">
       <Filter>ext\aemu_postoffice</Filter>
     </ClCompile>
     <ClCompile Include="UI\Notice.cpp">

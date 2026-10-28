@@ -45,6 +45,7 @@
 #include "Core/Util/GameDB.h"
 #include "Core/Util/RecentFiles.h"
 #include "Core/Util/PathUtil.h"
+#include "Core/Util/PSARUnpack.h"
 #include "Core/Util/VideoPlayer.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/Background.h"
@@ -65,6 +66,11 @@
 // This is in an objective-C file.
 #if PPSSPP_PLATFORM(IOS)
 void copyDeepLinkForPath(std::string_view filePath);
+#elif PPSSPP_PLATFORM(ANDROID)
+// The path is a content URI that PPSSPP has access to, so frontends and adb can launch it.
+void copyDeepLinkForPath(std::string_view filePath) {
+	System_CopyStringToClipboard(std::string(filePath));
+}
 #else
 // dummy
 void copyDeepLinkForPath(std::string_view) {}
@@ -231,7 +237,6 @@ static bool FileTypeIsPlayable(IdentifiedFileType fileType) {
 	switch (fileType) {
 	case IdentifiedFileType::ERROR_IDENTIFYING:
 	case IdentifiedFileType::UNKNOWN:
-	case IdentifiedFileType::PSX_ISO:
 	case IdentifiedFileType::PS2_ISO:
 	case IdentifiedFileType::PS3_ISO:
 	case IdentifiedFileType::UNKNOWN_BIN:
@@ -242,6 +247,9 @@ static bool FileTypeIsPlayable(IdentifiedFileType fileType) {
 	case IdentifiedFileType::PSP_UMD_VIDEO_ISO:
 		// Reverse logic.
 		return false;
+	case IdentifiedFileType::PSX_ISO:
+		// Through the firmware's POPS.
+		return InstalledFirmwareRunsPS1Discs();
 	default:
 		return true;
 	}
@@ -254,6 +262,11 @@ void GameScreen::RefreshInstalledUpdate() {
 		return;
 	}
 	hasInstalledUpdate_ = FindInstalledGameUpdate(info_->id, &installedUpdate_);
+}
+
+// Both panes use isHomebrew_, and which is created first depends on orientation.
+void GameScreen::BeforeCreateViews() {
+	isHomebrew_ = info_ && info_->region == GameRegion::HOMEBREW;
 }
 
 void GameScreen::CreateContentViews(UI::ViewGroup *parent) {
@@ -361,9 +374,9 @@ void GameScreen::CreateContentViews(UI::ViewGroup *parent) {
 	LinearLayout *infoLayout = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(10, 200, NONE, NONE));
 	leftColumn->Add(infoLayout);
 
-	if (info_->fileType == IdentifiedFileType::PSP_UMD_VIDEO_ISO) {
+	if (info_->fileType == IdentifiedFileType::PSP_UMD_VIDEO_ISO && GetUmdVideoVSHPath().empty()) {
 		auto er = GetI18NCategory(I18NCat::ERRORS);
-		leftColumn->Add(new NoticeView(NoticeLevel::INFO, er->T("PPSSPP doesn't support UMD Video."), ""));
+		leftColumn->Add(new NoticeView(NoticeLevel::INFO, ApplySafeSubstitutions(er->T("PSP firmware version %1 or later must be installed to play UMD video"), UMD_VIDEO_MIN_FIRMWARE), ""));
 		leftColumn->Add(new Choice(di->T("More info"), ImageID("I_LINK_OUT_QUESTION"), new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT)))->OnClick.Add([](UI::EventParams &e) {
 			System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/docs/reference/umd-video/");
 		});
@@ -551,13 +564,20 @@ void GameScreen::CreateSettingsViews(UI::ViewGroup *rightColumn) {
 	const bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
 
 	LinearLayout *rightColumnItems = new LinearLayout(ORIENT_VERTICAL);
-	rightColumnItems->SetSpacing(0.0f);
 	rightColumn->Add(rightColumnItems);
 
-	if (!inGame_ && FileTypeIsPlayable(info_->fileType)) {
-		Choice *play = rightColumnItems->Add(new Choice(ga->T("Play"), ImageID("I_PLAY")));
-		play->OnClick.Add([this](UI::EventParams &e) {
-			screenManager()->switchScreen(new EmuScreen(gamePath_));
+	ChoiceGroup *choices = rightColumnItems->Add(new ChoiceGroup());
+
+	// UMD Video plays in the XMB, with the disc in the drive.
+	const Path vshPath = info_->fileType == IdentifiedFileType::PSP_UMD_VIDEO_ISO ? GetUmdVideoVSHPath() : Path();
+	if (!inGame_ && (FileTypeIsPlayable(info_->fileType) || !vshPath.empty())) {
+		Choice *play = choices->Add(new Choice(ga->T("Play"), ImageID("I_PLAY")));
+		play->OnClick.Add([this, vshPath](UI::EventParams &e) {
+			if (vshPath.empty()) {
+				screenManager()->switchScreen(new EmuScreen(gamePath_));
+			} else {
+				screenManager()->switchScreen(new EmuScreen(vshPath, gamePath_, true));
+			}
 		});
 		// The file is being read, and maybe about to be replaced.
 		play->SetEnabled(!GamePacker::IsPacking(gamePath_));
@@ -607,29 +627,27 @@ void GameScreen::CreateSettingsViews(UI::ViewGroup *rightColumn) {
 		if (info_->hasConfig) {
 			// Only show the Game Settings button here if the game has a config. Always showing it
 			// is confusing since it'll just control the global settings.
-			Choice *btnGameSettings = rightColumnItems->Add(new Choice(ga->T("Game Settings"), ImageID("I_GEAR")));
+			Choice *btnGameSettings = choices->Add(new Choice(ga->T("Game Settings"), ImageID("I_GEAR")));
 			btnGameSettings->OnClick.Handle(this, &GameScreen::OnGameSettings);
 
-			Choice *btnDeleteGameConfig = rightColumnItems->Add(new Choice(ga->T("Delete Game Config"), ImageID("I_TRASHCAN")));
+			Choice *btnDeleteGameConfig = choices->Add(new Choice(ga->T("Delete Game Config"), ImageID("I_TRASHCAN")));
 			btnDeleteGameConfig->OnClick.Handle(this, &GameScreen::OnDeleteConfig);
 		} else {
-			Choice *btnCreateGameConfig = rightColumnItems->Add(new Choice(ga->T("Create Game Config"), ImageID("I_GEAR_STAR")));
+			Choice *btnCreateGameConfig = choices->Add(new Choice(ga->T("Create Game Config"), ImageID("I_GEAR_STAR")));
 			btnCreateGameConfig->OnClick.Handle(this, &GameScreen::OnCreateConfig);
 		}
 	}
 
 	if (g_Config.bEnableCheats) {
 		auto pa = GetI18NCategory(I18NCat::PAUSE);
-		rightColumnItems->Add(new Choice(pa->T("Cheats"), ImageID("I_CHEAT")))->OnClick.Add([this](UI::EventParams &e) {
+		choices->Add(new Choice(pa->T("Cheats"), ImageID("I_CHEAT")))->OnClick.Add([this](UI::EventParams &e) {
 			screenManager()->push(new CwCheatScreen(gamePath_));
 		});
 	}
 
-	isHomebrew_ = info_ && info_->region == GameRegion::HOMEBREW;
-
 	const bool packing = GamePacker::IsPacking(gamePath_);
 	if (fileTypeSupportCRC && !isHomebrew_ && !Reporting::HasCRC(gamePath_) && !packing) {
-		rightColumnItems->Add(new Choice(ga->T("Calculate CRC"), ImageID("I_CHECKMARK")))->OnClick.Add([this](UI::EventParams &) {
+		choices->Add(new Choice(ga->T("Calculate CRC"), ImageID("I_CHECKMARK")))->OnClick.Add([this](UI::EventParams &) {
 			Reporting::QueueCRC(gamePath_);
 			CRC32string = "...";  // signal that we're waiting for it. Kinda ugly.
 		});
@@ -728,7 +746,7 @@ void GameScreen::CreateContextMenu(UI::ViewGroup *parent) {
 
 	RefreshInstalledUpdate();
 	if (!inGame_ && hasInstalledUpdate_) {
-		Choice *btnDeleteUpdate = parent->Add(new Choice(ga->T("Delete Game Update"), ImageID("I_TRASHCAN")));
+		Choice *btnDeleteUpdate = parent->Add(new Choice(ga->T("Delete game update"), ImageID("I_TRASHCAN")));
 		btnDeleteUpdate->OnClick.Handle(this, &GameScreen::OnDeleteGameUpdate);
 	}
 
@@ -783,7 +801,7 @@ void GameScreen::OnDeleteGameUpdate(UI::EventParams &e) {
 	const bool trashAvailable = System_GetPropertyBool(SYSPROP_HAS_TRASH_BIN);
 	const InstalledGameUpdate update = installedUpdate_;
 	screenManager()->push(
-		new UI::MessagePopupScreen(ga->T("Delete Game Update"), prompt, trashAvailable ? di->T("Move to trash") : di->T("Delete"), di->T("Cancel"),
+		new UI::MessagePopupScreen(ga->T("Delete game update"), prompt, trashAvailable ? di->T("Move to trash") : di->T("Delete"), di->T("Cancel"),
 			[this, update](bool yes) {
 		if (!yes) {
 			return;
@@ -857,10 +875,8 @@ void GameScreen::OnDeleteConfig(UI::EventParams &e) {
 void GameScreen::OnGameSettings(UI::EventParams &e) {
 	std::shared_ptr<GameInfo> info_ = g_gameInfoCache->GetInfo(NULL, gamePath_, GameInfoFlags::PARAM_SFO);
 	if (info_ && info_->Ready(GameInfoFlags::PARAM_SFO)) {
-		std::string discID = info_->GetParamSFO().GetValueString("DISC_ID");
-		if ((discID.empty() || !info_->disc_total) && gamePath_.FilePathContainsNoCase("PSP/GAME/"))
-			discID = g_paramSFO.GenerateFakeID(gamePath_);
-		screenManager()->push(new GameSettingsScreen(gamePath_, discID, true));
+		// The cache has already replaced the ID of homebrew with a generated one.
+		screenManager()->push(new GameSettingsScreen(gamePath_, info_->id, true));
 	}
 }
 

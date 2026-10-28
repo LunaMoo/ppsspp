@@ -24,16 +24,22 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.display.DeviceProductInfo;
+import android.hardware.display.DisplayManager;
 import android.hardware.input.InputManager;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.text.InputType;
 import android.util.Log;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
@@ -100,6 +106,7 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 	// For accelerometer sensing.
 	private SensorManager mSensorManager;
 	private Sensor mAccelerometer;
+	private Sensor mGyroscope;
 
 	private String shortcutParam = "";
 	private static String overrideShortcutParam = null;
@@ -114,6 +121,29 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 	private AudioFocusChangeListener audioFocusChangeListener;
 	private AudioManager audioManager;
 	private InputManager.InputDeviceListener inputDeviceListener;
+
+	// The game on a second display, while there's one (and the backend can draw to it) and we're started.
+	private ExternalDisplayPresentation externalDisplayPresentation;
+	private boolean externalDisplayWatched = false;
+	private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
+		@Override
+		public void onDisplayAdded(int displayId) {
+			updateExternalDisplay();
+		}
+
+		@Override
+		public void onDisplayRemoved(int displayId) {
+			updateExternalDisplay();
+		}
+
+		@Override
+		public void onDisplayChanged(int displayId) {
+			// The device's own screen changes all the time (refresh rate).
+			if (displayId != Display.DEFAULT_DISPLAY) {
+				updateExternalDisplay();
+			}
+		}
+	};
 
 	// This is to avoid losing the game/menu state etc when we are just
 	// switched-away from or rotated etc.
@@ -482,6 +512,10 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		NativeApp.audioConfig(optimalFramesPerBuffer, optimalSampleRate);
 		NativeApp.init(model, deviceType, languageRegion, apkFilePath, dataDir, extStorageDir, externalFilesDir, nativeLibDir, additionalStorageDirs, cacheDir, shortcut, installerName, Build.VERSION.SDK_INT, Build.BOARD);
 
+		// Both need the config.
+		ContentUri.flushShortcutUris(this);
+		ContentUri.manageUriGrants(this);
+
 		sendInitialGrants();
 
 		// OK, config should be initialized, we can query for screen rotation.
@@ -713,6 +747,8 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			Log.i(TAG, "Found Shortcut Parameter in data, passing on: " + shortcutParam);
 			setShortcutParam(shortcutParam);
 		}
+		// So its file grant is kept (see ContentUri.manageUriGrants).
+		ContentUri.queueShortcutUri(this, getIntent().getStringExtra(SHORTCUT_EXTRA_KEY));
 
 		String achievementsHostOverride = AchievementsHostOverrideReceiver.getAchievementsHostOverride(this);
 		if (achievementsHostOverride != null && !achievementsHostOverride.isEmpty()) {
@@ -724,6 +760,10 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 
 		mSensorManager = (SensorManager)getSystemService(Activity.SENSOR_SERVICE);
 		mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+		mGyroscope = mSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+		String sensors = (mAccelerometer != null ? "1" : "0") + ":" + (mGyroscope != null ? "1" : "0");
+		Log.i(TAG, "Sensors (accelerometer:gyro): " + sensors);
+		NativeApp.sendMessageFromJava("sensors", sensors);
 
 		surfaceManager = new NativeSurfaceManager(this);
 		TextRenderer.init(this);
@@ -940,6 +980,61 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		updateSustainedPerformanceMode();
 	}
 
+	// Shows the game on a presentation display (like a TV on HDMI), if there's one, the backend can draw
+	// to a second surface (Vulkan) and the setting says so. Otherwise Android mirrors the phone there.
+	private void updateExternalDisplay() {
+		Display display = null;
+		if (externalDisplayWatched && "1".equals(NativeApp.queryConfig("externalDisplayOutput"))) {
+			DisplayManager displayManager = (DisplayManager)getSystemService(Context.DISPLAY_SERVICE);
+			for (Display candidate : displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)) {
+				if (!isBuiltInDisplay(candidate)) {
+					display = candidate;
+					break;
+				}
+			}
+		}
+		if (externalDisplayPresentation != null && (display == null || !externalDisplayPresentation.isShowing() || externalDisplayPresentation.getDisplay().getDisplayId() != display.getDisplayId())) {
+			dismissExternalDisplay();
+		}
+		if (externalDisplayPresentation != null || display == null) {
+			return;
+		}
+		Log.i(TAG, "Showing the game on display " + display.getDisplayId() + " (" + display.getName() + ")");
+		ExternalDisplayPresentation presentation = new ExternalDisplayPresentation(this, display);
+		presentation.setOnDismissListener(dialog -> {
+			// Dismissed by the system, which some display changes (like a mode switch) do. Show it again if it should be.
+			if (externalDisplayPresentation == presentation) {
+				externalDisplayPresentation = null;
+				new Handler(Looper.getMainLooper()).post(this::updateExternalDisplay);
+			}
+		});
+		try {
+			presentation.show();
+			externalDisplayPresentation = presentation;
+		} catch (WindowManager.InvalidDisplayException e) {
+			Log.w(TAG, "Couldn't show the game on display " + display.getDisplayId() + ": " + e);
+		}
+	}
+
+	// A second screen that's part of the device (a dual-screen handheld's, a cover screen) isn't a TV, and
+	// the game shouldn't move there by itself. Only Android 12 and up can tell.
+	private static boolean isBuiltInDisplay(Display display) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+			return false;
+		}
+		DeviceProductInfo info = display.getDeviceProductInfo();
+		return info != null && info.getConnectionToSinkType() == DeviceProductInfo.CONNECTION_TO_SINK_BUILT_IN;
+	}
+
+	private void dismissExternalDisplay() {
+		// Cleared first, so its dismiss listener knows it was us.
+		ExternalDisplayPresentation presentation = externalDisplayPresentation;
+		externalDisplayPresentation = null;
+		if (presentation != null) {
+			presentation.dismiss();
+		}
+	}
+
 	// The render loop thread (EmuThread) is now spawned from the native side.
 	protected void startRenderLoopThread() {
 		synchronized (PpssppActivity.class) {
@@ -999,6 +1094,7 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 
 		mSensorManager = null;
 		mAccelerometer = null;
+		mGyroscope = null;
 
 		// Probably vain attempt to help the garbage collector...
 		audioFocusChangeListener = null;
@@ -1064,10 +1160,26 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			NativeApp.resume();
 		}
 		updateAudioFocus(this.audioManager, this.audioFocusChangeListener);
-		mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
+		if (mAccelerometer != null) {
+			mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
+		}
+		if (mGyroscope != null) {
+			mSensorManager.registerListener(this, mGyroscope, SensorManager.SENSOR_DELAY_GAME);
+		}
 
 		InputManager inputManager = (InputManager)getSystemService(Context.INPUT_SERVICE);
 		inputManager.registerInputDeviceListener(inputDeviceListener, null);
+
+		if (checkCurrent("showing the game on a second display")) {
+			// For the message on the TV while we're in the menus, "In menus on <the name>".
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+				NativeApp.setDeviceName(Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME));
+			}
+			DisplayManager displayManager = (DisplayManager)getSystemService(Context.DISPLAY_SERVICE);
+			displayManager.registerDisplayListener(displayListener, null);
+			externalDisplayWatched = true;
+			updateExternalDisplay();
+		}
 
 		// In case the surface outlived the stop. Otherwise this waits for surfaceCreated.
 		startRenderLoopThread();
@@ -1085,12 +1197,22 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		InputManager inputManager = (InputManager)getSystemService(Context.INPUT_SERVICE);
 		inputManager.unregisterInputDeviceListener(inputDeviceListener);
 
+		// Before the render thread stops, so it can let go of the second display's surface.
+		DisplayManager displayManager = (DisplayManager)getSystemService(Context.DISPLAY_SERVICE);
+		displayManager.unregisterDisplayListener(displayListener);
+		externalDisplayWatched = false;
+		dismissExternalDisplay();
+
 		// Normally surfaceDestroyed has done this already, but not every device destroys the surface of a
 		// stopped activity, and an invisible game shouldn't keep running.
 		joinRenderLoopThread();
 
 		mSensorManager.unregisterListener(this);
 		loseAudioFocus(this.audioManager, this.audioFocusChangeListener);
+
+		if (mSurfaceView != null) {
+			mSurfaceView.onActivityStopped();
+		}
 
 		// After a finish() and a quick relaunch, this comes after the new activity's onStart, and the audio and
 		// the location updates are its now.
@@ -1151,11 +1273,14 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 
 	@Override
 	public void onSensorChanged(SensorEvent event) {
-		if (event.sensor.getType() != Sensor.TYPE_ACCELEROMETER) {
-			return;
+		switch (event.sensor.getType()) {
+		case Sensor.TYPE_ACCELEROMETER:
+			NativeApp.accelerometer(event.values[0], event.values[1], event.values[2]);
+			break;
+		case Sensor.TYPE_GYROSCOPE:
+			NativeApp.gyroscope(event.values[0], event.values[1], event.values[2], event.timestamp);
+			break;
 		}
-		// Can also look at event.timestamp for accuracy magic
-		NativeApp.accelerometer(event.values[0], event.values[1], event.values[2]);
 	}
 
 	@Override
@@ -1509,7 +1634,8 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		} else {
 			input.setInputType(InputType.TYPE_CLASS_TEXT);
 		}
-		input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+		// In landscape, keyboards otherwise go fullscreen with an edit box of their own, covering the dialog.
+		input.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN);
 		input.setText(defaultText);
 		input.setFocusableInTouchMode(true);
 		input.requestFocus();
@@ -1559,7 +1685,8 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		dlg.setCancelable(true);
 		Window wnd = dlg.getWindow();
 		if (wnd != null) {
-			wnd.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+			// Moves the dialog up out of the keyboard's way.
+			wnd.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 		}
 		try {
 			dlg.show();
@@ -1721,6 +1848,11 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			InputMethodManager inputMethodManager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
 			inputMethodManager.hideSoftInputFromWindow(surfView.getWindowToken(), 0);
 			return true;
+		} else if (command.equals("forceKeyboard") && mSurfaceView != null) {
+			// "on" = keep the soft keyboard up (and let it type into the game), "persist" = also bring it back after
+			// an app switch, "off" = hide it again.
+			mSurfaceView.setKeyboardForced(!params.equals("off"), params.equals("persist"));
+			return true;
 		} else if (command.equals("inputbox")) {
 			String title = "Input";
 			String defString = "";
@@ -1791,6 +1923,9 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 			return true;
 		} else if (command.equals("sustainedPerfMode")) {
 			updateSustainedPerformanceMode();
+			return true;
+		} else if (command.equals("externalDisplay")) {
+			updateExternalDisplay();
 			return true;
 		} else if (command.equals("immersive")) {
 			updateSystemUiVisibility();
@@ -1979,13 +2114,19 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 
 	private static String parseIntent(Intent intent) {
 		Uri data = intent.getData();
+		String args = intent.getStringExtra(ARGS_EXTRA_KEY);
 		if (data != null) {
 			String path = data.toString();
 			// Do some unescaping. Not really sure why needed.
-			return "\"" + path.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+			String quotedPath = "\"" + path.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+			if (args != null) {
+				// Launchers that open the game by URI can still pass options. The path goes first, so it's the one booted.
+				Log.i(TAG, "Found args parameter in extra-data alongside the data URI: " + args);
+				return quotedPath + " " + args;
+			}
+			return quotedPath;
 		} else {
 			String param = intent.getStringExtra(SHORTCUT_EXTRA_KEY);
-			String args = intent.getStringExtra(ARGS_EXTRA_KEY);
 			if (param != null) {
 				Log.i(TAG, "Found Shortcut Parameter in extra-data: " + param);
 				return "\"" + param.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
@@ -2040,6 +2181,7 @@ public class PpssppActivity extends AppCompatActivity implements SensorEventList
 		} else {
 			// Someone launched a shortcut while we were running....
 			setIntent(intent);
+			ContentUri.queueShortcutUri(this, intent.getStringExtra(SHORTCUT_EXTRA_KEY));
 			String value = parseIntent(intent);
 			if (value != null) {
 				// TODO: Actually send a command to the native code to launch the new game.

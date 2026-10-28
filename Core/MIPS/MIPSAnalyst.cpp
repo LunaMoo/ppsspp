@@ -135,6 +135,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x1616ee7052542059, 48, "vtfm_t", },
 	{ 0x16965ca11a4e7dac, 104, "vmmul_q_transp", },
 	{ 0x16afe830a5dd2de2, 40, "vdiv_q", },
+	{ 0x181b963854b3045f, 1736, "zuma_pad_analog", }, // Zuma
 	{ 0x184e834a63a79016, 32, "isnanf", },
 	{ 0x1874ee898c7b9f16, 512, "kokoroconnect_download_frame", }, // Kokoro Connect Yochi Random
 	{ 0x189212bda9c94df1, 736, "atanf", },
@@ -195,6 +196,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x35d3527ff8c22ff2, 56, "matrix_scale_q", },
 	{ 0x368f6cf979709a31, 744, "memmove", }, // Jui Dr. Touma Jotarou
 	{ 0x373ce518eee5a2d2, 20, "matrix300_store_q", },
+	{ 0x38260ad724f4d8f7, 804, "zuma_aim_cursor", }, // Zuma
 	{ 0x3840f5766fada4b1, 592, "dissidia_recordframe_avi", }, // Dissidia (US), Dissidia 012 (US)
 	{ 0x388043e96b0e11fd, 144, "sceGupMaterial", },
 	{ 0x38f19bc3be215acc, 388, "log10f", },
@@ -243,6 +245,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x52d5141545a75eda, 60, "sceGuClutMode", },
 	{ 0x530cbe1ce9b45d58, 108, "sceGuLightAtt", },
 	{ 0x53c9aa23504a630f, 96, "vmmul_q_5", },
+	{ 0x534ee7407afd0428, 1868, "syphonfilterls_update_trail", }, // Syphon Filter: Logan's Shadow (US)
 	{ 0x54015ccbcbc75374, 24, "strlen", }, // Metal Gear Solid: Peace Walker demo
 	{ 0x5550d87a851c218c, 168, "dl_write_viewport", },
 	{ 0x55c1294280bfade0, 88, "sceGuBlendFunc", },
@@ -336,6 +339,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x8ee81b03d2eef1e7, 28, "vmul_t", },
 	{ 0x8f09fb8693c3c49d, 992, "kirameki_school_life_download_frame", }, // Hentai Ouji To Warawanai Neko
 	{ 0x8f19c41e8b987e18, 100, "matrix_mogrify", },
+	{ 0x8f84fb657a6ba506, 1148, "syphonfilterls_fade", }, // Syphon Filter: Logan's Shadow (US)
 	{ 0x8ff11e9bed387401, 700, "memmove", }, // God Eater 2
 	{ 0x910140c1a07aa59e, 256, "sceVfpuMatrix4Rot", },
 	{ 0x91606bd72ae90481, 44, "wmemcpy", },
@@ -356,8 +360,10 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x9e2941c4a5c5e847, 792, "memcpy", }, // LittleBigPlanet (US)
 	{ 0x9e6adef67e76ed5c, 188, "everybodystennis_copy_portrait", }, // Everybody's Tennis (EUR)
 	{ 0x9e6ce11f9d49f954, 292, "memcpy", }, // Jeanne d'Arc (US)
+	{ 0x9e6e007072b74503, 2028, "syphonfilterls_draw_trail", }, // Syphon Filter: Logan's Shadow (US)
 	{ 0x9f269daa6f0da803, 128, "sceGupScissor", },
 	{ 0x9f7919eeb43982b0, 208, "__fixdfsi", },
+	{ 0xa0ec0ed83a53b883, 7304, "syphonfilter_steer", }, // Syphon Filter: Dark Mirror (US)
 	{ 0xa1c9b0a2c71235bf, 1752, "marvelalliance1_copy" }, // Marvel Ultimate Alliance 1 (EU)
 	{ 0x9b76c7f2a41aa805, 1752, "marvelalliance1_copy" }, // Marvel Ultimate alliance 1 (US)
 	{ 0xa1ca0640f11182e7, 72, "strcspn", },
@@ -403,6 +409,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xb3fef47fb27d57c9, 44, "vector_scale_t", },
 	{ 0xb43fd5078ae78029, 84, "send_commandi_stall", },
 	{ 0xb43ffbd4dc446dd2, 324, "atan2f", },
+	{ 0xb4686bcdfb76e454, 156, "activisionhits_frame_limit", }, // Activision Hits Remixed (issue #20287)
 	{ 0xb5fdb3083e6f4b3f, 36, "vhtfm_t", },
 	{ 0xb6a04277fb1e1a1a, 104, "vmmul_q_transp", },
 	{ 0xb726917d688ac95b, 268, "kagaku_no_ensemble_download_frame", }, // Toaru Majutsu to Kagaku no Ensemble
@@ -909,13 +916,32 @@ namespace MIPSAnalyst {
 		return DetermineRegisterUsage(reg, addr, instrs) == USAGE_CLOBBERED;
 	}
 
-	void HashFunctions() {
+	// Ranges are (address, size), sorted by address and not overlapping.
+	static bool InsideRanges(const std::vector<std::pair<u32, u32>> &ranges, u32 start, u32 end) {
+		start &= 0x3FFFFFFF;
+		end &= 0x3FFFFFFF;
+		auto iter = std::upper_bound(ranges.begin(), ranges.end(), start, [](u32 address, const std::pair<u32, u32> &range) {
+			return address < (range.first & 0x3FFFFFFF);
+		});
+		if (iter == ranges.begin()) {
+			return false;
+		}
+		--iter;
+		const u32 rangeStart = iter->first & 0x3FFFFFFF;
+		return start >= rangeStart && end <= rangeStart + iter->second;
+	}
+
+	static void HashFunctions(const std::vector<std::pair<u32, u32>> &unchanged = {}) {
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 		std::vector<u32> buffer;
 
 		for (auto iter = functions.begin(), end = functions.end(); iter != end; iter++) {
 			AnalyzedFunction &f = *iter;
 			if (!Memory::IsValidRange(f.start, f.end - f.start + 4)) {
+				continue;
+			}
+			// end is the last instruction.
+			if (f.hasHash && InsideRanges(unchanged, f.start, f.end + 4)) {
 				continue;
 			}
 
@@ -1311,9 +1337,11 @@ namespace MIPSAnalyst {
 		return false;
 	}
 
-	void RehashFunctions() {
+	void RehashFunctions(const std::vector<std::pair<u32, u32>> &unchanged) {
+		std::vector<std::pair<u32, u32>> sorted = unchanged;
+		std::sort(sorted.begin(), sorted.end());
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
-		HashFunctions();
+		HashFunctions(sorted);
 		UpdateHashToFunctionMap();
 	}
 
@@ -1548,7 +1576,7 @@ namespace MIPSAnalyst {
 			switch (opInfo & CONDTYPE_MASK) {
 			case CONDTYPE_EQ:
 				if (opInfo & IN_FPUFLAG) {	// fpu branch
-					info.conditionMet = currentMIPS->fpcond == 0;
+					info.conditionMet = cpu->GetFPCond() == 0;
 				} else {
 					info.conditionMet = (rt == rs);
 					if (MIPS_GET_RT(op) == MIPS_GET_RS(op))	{	// always true
@@ -1558,7 +1586,7 @@ namespace MIPSAnalyst {
 				break;
 			case CONDTYPE_NE:
 				if (opInfo & IN_FPUFLAG) {	// fpu branch
-					info.conditionMet = currentMIPS->fpcond != 0;
+					info.conditionMet = cpu->GetFPCond() != 0;
 				} else {
 					info.conditionMet = (rt != rs);
 					if (MIPS_GET_RT(op) == MIPS_GET_RS(op))	{	// always true

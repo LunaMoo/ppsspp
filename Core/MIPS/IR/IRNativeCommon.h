@@ -68,6 +68,9 @@ struct IRNativeFixedCodeLabel {
 };
 
 struct IRNativeBlock {
+	// The guest address the block starts at, and the offset of its code (what the block shadow holds).
+	u32 startPC = 0;
+	int entryOffset = 0;
 	int checkedOffset = 0;
 	std::vector<IRNativeBlockExit> exits;
 	// Code offset of each IR instruction, only kept when profiling.
@@ -80,7 +83,6 @@ constexpr int NATIVE_CODE_SPACE_SIZE = 24 * 1024 * 1024;
 
 class IRNativeBackend {
 public:
-	IRNativeBackend(IRBlockCache &blocks);
 	virtual ~IRNativeBackend();
 
 	void CompileIRInst(IRInst inst);
@@ -89,11 +91,16 @@ public:
 	bool CodeInRange(const u8 *ptr) const;
 	int OffsetFromCodePtr(const u8 *ptr);
 
+	void SetMIPSState(MIPSState *mips) {
+		mips_ = mips;
+	}
 	virtual void GenerateFixedCode(MIPSState *mipsState) = 0;
-	virtual bool CompileBlock(IRBlockCache *irBlockCache, int block_num) = 0;
+	// Block numbers are the caller's, and only grow until ClearAllBlocks.
+	virtual bool CompileBlock(int block_num, u32 startPC, const IRInst *instructions, int count) = 0;
 	virtual void ClearAllBlocks() = 0;
-	virtual void InvalidateBlock(IRBlockCache *irBlockCache, int block_num) = 0;
-	void FinalizeBlock(IRBlockCache *irBlockCache, int block_num, const JitOptions &jo);
+	virtual void InvalidateBlock(int block_num) = 0;
+	// Links the block's exits, and other blocks' exits to it.
+	void FinalizeBlock(int block_num, const JitOptions &jo);
 
 	virtual void UpdateFCR31(MIPSState *mipsState) {}
 
@@ -102,6 +109,15 @@ public:
 	}
 
 	const IRNativeBlock *GetNativeBlock(int block_num) const;
+	int GetNumNativeBlocks() const {
+		return (int)nativeBlocks_.size();
+	}
+	int GetBlockEntry(int block_num) const {
+		return nativeBlocks_[block_num].entryOffset;
+	}
+	// Where the block's code starts: its entry, or its checked entry if that comes first. Blocks'
+	// code follows in block order.
+	int GetBlockCodeStart(int block_num) const;
 	void SetBlockCheckedOffset(int block_num, int offset);
 	void SetProfiling(bool profiling) {
 		profiling_ = profiling;
@@ -159,6 +175,8 @@ protected:
 	virtual void CompIR_VecPack(IRInst inst) = 0;
 	virtual void CompIR_VecStore(IRInst inst) = 0;
 	virtual void CompIR_ValidateAddress(IRInst inst) = 0;
+	// Kernel code's loads and stores, which may be hardware registers.
+	virtual void CompIR_KernelLoadStore(IRInst inst) { CompIR_Generic(inst); }
 
 	virtual void OverwriteExit(int srcOffset, int len, int block_num) = 0;
 
@@ -171,43 +189,29 @@ protected:
 	static void NotifyMIPSInterpret(const char *name);
 
 	// Callback to log AND perform a base interpreter op.  Alternative to NotifyMIPSInterpret().
-	static void DoMIPSInst(uint32_t op);
+	static void DoMIPSInst(uint32_t op, MIPSState *mips);
 
 	// Callback to log AND perform an IR interpreter inst.  Returns 0 or a PC to jump to.
-	static uint32_t DoIRInst(uint64_t inst);
+	static uint32_t DoIRInst(uint64_t inst, MIPSState *mips);
 
-	static int ReportBadAddress(uint32_t addr, uint32_t alignment, uint32_t isWrite);
+	static int ReportBadAddress(uint32_t addr, uint32_t alignment, uint32_t isWrite, MIPSState *mips);
 
+	void SetBlockEntry(int block_num, u32 startPC, int offset);
+	// The live block starting at pc, or -1.
+	int FindBlockByStart(u32 pc) const;
 	void AddLinkableExit(int block_num, uint32_t pc, int exitStartOffset, int exitLen);
+	// Forgets the block's links, and its start. -1 for all blocks.
 	void EraseAllLinks(int block_num);
 	// For the profiler's report. Does nothing unless profiling.
 	void RecordIRAddresses(int block_num, const std::vector<const u8 *> &addresses);
 
 	IRNativeHooks hooks_;
-	IRBlockCache &blocks_;
+	// The CPU the generated code runs, for the calls out of it.
+	MIPSState *mips_ = nullptr;
 	std::vector<IRNativeBlock> nativeBlocks_;
 	std::unordered_multimap<uint32_t, int> linksTo_;
+	std::unordered_map<uint32_t, int> blockByStart_;
 	bool profiling_ = false;
-};
-
-class IRNativeBlockCacheDebugInterface : public JitBlockCacheDebugInterface {
-public:
-	IRNativeBlockCacheDebugInterface(const MIPSComp::IRBlockCache &irBlocks);
-	void Init(const IRNativeBackend *backend);
-	int GetNumBlocks() const override;
-	int GetBlockNumberFromStartAddress(u32 em_address) const override;
-	JitBlockDebugInfo GetBlockDebugInfo(int blockNum) const override;
-	JitBlockMeta GetBlockMeta(int blockNum) const override;
-	JitBlockProfileStats GetBlockProfileStats(int blockNum) const override;
-	void ComputeStats(BlockCacheStats &bcStats) const override;
-	bool IsValidBlock(int blockNum) const override;
-
-private:
-	void GetBlockCodeRange(int blockNum, int *startOffset, int *size) const;
-
-	const MIPSComp::IRBlockCache &irBlocks_;
-	const CodeBlockCommon *codeBlock_ = nullptr;
-	const IRNativeBackend *backend_ = nullptr;
 };
 
 class IRNativeJit : public IRJit {
@@ -215,6 +219,7 @@ public:
 	IRNativeJit(MIPSState *mipsState);
 
 	void RunLoopUntil(u64 globalticks) override;
+	void RunDowncount() override;
 
 	void ClearCache() override;
 
@@ -228,16 +233,19 @@ public:
 	void UpdateFCR31() override;
 	void FlushProfile() override;
 
-	JitBlockCacheDebugInterface *GetBlockCacheDebugInterface() override;
-
 	const u8 *GetCodeBase() const override;
 	void GetStats(JitStats *stats) const override;
 
 protected:
 	void Init(IRNativeBackend &backend);
-	bool CompileNativeBlock(IRBlockCache *irBlockCache, int block_num) override;
-	void FinalizeNativeBlock(IRBlockCache *irBlockCache, int block_num) override;
-	void InvalidateNativeBlock(IRBlockCache *irBlockCache, int block_num) override;
+	CompileResult CompileTargetBlock(int block_num, const std::vector<IRInst> &instructions) override;
+	// Compiles the IR again, since only the native code is kept.
+	void GetBlockInstructions(const JitBlock &block, std::vector<IRInst> &instructions) const override;
+	int GetBlockCodeSize(int block_num) const override;
+	void GetBlockTargetDisasm(int block_num, std::vector<std::string> &lines) const override;
+	void GetBlockCodeRange(int block_num, int *startOffset, int *size) const;
+	void FinalizeTargetBlock(int block_num) override;
+	void InvalidateTargetBlock(int block_num) override;
 
 	void CollectProfileSamples();
 	int FindBlockByCodeOffset(int offset) const;
@@ -265,7 +273,6 @@ protected:
 
 	IRNativeBackend *backend_ = nullptr;
 	IRNativeHooks hooks_;
-	IRNativeBlockCacheDebugInterface debugInterface_;
 };
 
 } // namespace MIPSComp

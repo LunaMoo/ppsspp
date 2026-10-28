@@ -570,7 +570,7 @@ void SoftGPU::ConvertTextureDescFrom16(Draw::TextureDesc &desc, int srcwidth, in
 			break;
 
 		default:
-			ERROR_LOG_REPORT(Log::G3D, "Software: Unexpected framebuffer format: %d", displayFormat_);
+			ERROR_LOG(Log::G3D, "Software: Unexpected framebuffer format: %d", displayFormat_);
 			break;
 		}
 	}
@@ -647,7 +647,9 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(const DisplayLayoutConfig &config, 
 				outputFlags |= OutputFlags::PILLARBOX;
 			}
 		}
-	} else if (!Memory::IsValidAddress(displayFramebuf_) || srcwidth == 0 || srcheight == 0) {
+	} else if (srcwidth == 0 || srcheight == 0 || displayStride_ < 0 || !Memory::IsValidRange(displayFramebuf_, (displayStride_ == 0 ? srcwidth : displayStride_) * srcheight * (displayFormat_ == GE_FORMAT_8888 ? 4 : 2))) {
+		// Nothing, or not all of it in memory: the PSP takes strides that run past the end of VRAM, or
+		// negative ones (rows going up.)
 		hasImage = false;
 		u1 = 1.0f;
 	} else if (displayFormat_ == GE_FORMAT_8888) {
@@ -716,6 +718,16 @@ void SoftGPU::BeginHostFrame(const DisplayLayoutConfig &config) {
 
 bool SoftGPU::PresentedThisFrame() const {
 	return presentation_ ? presentation_->PresentedThisFrame() : false;
+}
+
+void SoftGPU::SetPresentationOutput(const OutputParams *output) {
+	if (presentation_) {
+		presentation_->SetOutputOverride(output);
+	}
+}
+
+bool SoftGPU::PresentsToOtherOutput() const {
+	return presentation_ && presentation_->HasOutputOverride();
 }
 
 void SoftGPU::MarkDirty(uint32_t addr, uint32_t stride, uint32_t height, GEBufferFormat fmt, SoftGPUVRAMDirty value) {
@@ -949,7 +961,7 @@ void SoftGPU::Execute_Prim(u32 op, u32 diff) {
 	FlushImm();
 
 	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
-		ERROR_LOG_REPORT(Log::G3D, "Software: Bad vertex address %08x!", gstate_c.vertexAddr);
+		ERROR_LOG(Log::G3D, "Software: Bad vertex address %08x!", gstate_c.vertexAddr);
 		return;
 	}
 
@@ -959,7 +971,7 @@ void SoftGPU::Execute_Prim(u32 op, u32 diff) {
 	const u32 vertType = gstate.vertType;
 	if ((vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		if (!Memory::IsValidAddress(gstate_c.indexAddr)) {
-			ERROR_LOG_REPORT(Log::G3D, "Software: Bad index address %08x!", gstate_c.indexAddr);
+			ERROR_LOG(Log::G3D, "Software: Bad index address %08x!", gstate_c.indexAddr);
 			return;
 		}
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
@@ -1029,7 +1041,7 @@ void SoftGPU::Execute_Bezier(u32 op, u32 diff) {
 	}
 
 	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
-		ERROR_LOG_REPORT(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
+		ERROR_LOG(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
 		return;
 	}
 
@@ -1038,14 +1050,14 @@ void SoftGPU::Execute_Bezier(u32 op, u32 diff) {
 	const u32 vertType = gstate.vertType;
 	if ((vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		if (!Memory::IsValidAddress(gstate_c.indexAddr)) {
-			ERROR_LOG_REPORT(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
+			ERROR_LOG(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
 			return;
 		}
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 	}
 
 	if ((vertType & GE_VTYPE_MORPHCOUNT_MASK) || vertTypeIsSkinningEnabled(vertType)) {
-		DEBUG_LOG_REPORT(Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", vertType, (vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(vertType));
+		DEBUG_LOG(Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", vertType, (vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(vertType));
 	}
 
 	Spline::BezierSurface surface;
@@ -1082,7 +1094,7 @@ void SoftGPU::Execute_Spline(u32 op, u32 diff) {
 	}
 
 	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
-		ERROR_LOG_REPORT(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
+		ERROR_LOG(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
 		return;
 	}
 
@@ -1091,14 +1103,14 @@ void SoftGPU::Execute_Spline(u32 op, u32 diff) {
 	const u32 vertType = gstate.vertType;
 	if ((vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		if (!Memory::IsValidAddress(gstate_c.indexAddr)) {
-			ERROR_LOG_REPORT(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
+			ERROR_LOG(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
 			return;
 		}
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 	}
 
 	if ((vertType & GE_VTYPE_MORPHCOUNT_MASK) || vertTypeIsSkinningEnabled(vertType)) {
-		DEBUG_LOG_REPORT(Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", vertType, (vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(vertType));
+		DEBUG_LOG(Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", vertType, (vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(vertType));
 	}
 
 	Spline::SplineSurface surface;

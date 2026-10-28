@@ -1,5 +1,6 @@
 #import "AppDelegate.h"
 #import "SceneDelegate.h"
+#import "ExternalDisplaySceneDelegate.h"
 #import "iOSCoreAudio.h"
 #import "Common/System/System.h"
 #import "Common/System/NativeApp.h"
@@ -23,6 +24,7 @@
 // This is necessary because otherwise classes from static libraries aren't loaded.
 // We should move all the iOS code into the main binary directly to avoid this problem.
 __attribute__((used)) static Class _forceLinkSceneDelegate = [SceneDelegate class];
+__attribute__((used)) static Class _forceLinkExternalDisplaySceneDelegate = [ExternalDisplaySceneDelegate class];
 
 @implementation AppDelegate
 
@@ -82,6 +84,14 @@ __attribute__((used)) static Class _forceLinkSceneDelegate = [SceneDelegate clas
 	iOSCoreAudioInit();
 }
 
+// for AVAudioSessionRouteChangeNotification
+-(void) handleAudioRouteChange:(NSNotification *)notification {
+	NSNumber *reason = notification.userInfo[AVAudioSessionRouteChangeReasonKey];
+	char buf[32];
+	snprintf(buf, sizeof(buf), "change, reason %d", reason.intValue);
+	iOSCoreAudioLogRoute(buf);
+}
+
 -(BOOL) application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 	self.launchOptions = launchOptions;
 
@@ -91,6 +101,7 @@ __attribute__((used)) static Class _forceLinkSceneDelegate = [SceneDelegate clas
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAudioSessionInterruption:) name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleMediaServicesWereReset:) name:AVAudioSessionMediaServicesWereResetNotification object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAudioRouteChange:) name:AVAudioSessionRouteChangeNotification object:nil];
 
 	return YES;
 }

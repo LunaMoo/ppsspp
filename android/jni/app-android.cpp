@@ -8,9 +8,11 @@
 
 #if PPSSPP_PLATFORM(ANDROID)
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdint>
 
+#include <map>
 #include <sstream>
 #include <queue>
 #include <mutex>
@@ -69,12 +71,14 @@ struct JNIEnv {};
 #include "Common/GPU/OpenGL/GLFeatures.h"
 
 #include "Common/System/Display.h"
+#include "Common/GPU/thin3d.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
 #include "Common/System/OSD.h"
 #include "Common/System/Request.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/File/Path.h"
+#include "Common/File/FileUtil.h"
 #include "Common/File/DirListing.h"
 #include "Common/File/VFS/VFS.h"
 #include "Common/File/VFS/DirectoryReader.h"
@@ -89,6 +93,7 @@ struct JNIEnv {};
 #include "Common/VR/PPSSPPVR.h"
 #include "Common/GPU/Vulkan/VulkanLoader.h"
 #include "Common/GPU/GraphicsContext.h"
+#include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/Vulkan/VulkanGraphicsContext.h"
 #include "android/jni/AndroidEGLGraphicsContext.h"
 #include "Common/StringUtils.h"
@@ -99,6 +104,7 @@ struct JNIEnv {};
 #include "Core/ConfigValues.h"
 #include "Core/Loaders.h"
 #include "Core/KeyMap.h"
+#include "Core/Util/RecentFiles.h"
 #include "Core/System.h"
 #include "Core/EmuThread.h"
 #include "Core/HLE/sceUsbCam.h"
@@ -125,6 +131,9 @@ static std::vector<FrameCommand> g_frameCommands;
 static std::string systemName;
 static std::string langRegion;
 static std::string boardName;
+// The name the user gave the device (like "Galaxy S26"). Set from the UI thread.
+static std::mutex g_deviceNameLock;
+static std::string g_deviceName;
 
 std::string g_externalDir;  // Original external dir (root of Android storage).
 std::string g_extFilesDir;  // App private external dir.
@@ -164,6 +173,8 @@ static float g_safeInsetRight = 0.0;
 static float g_safeInsetTop = 0.0;
 static float g_safeInsetBottom = 0.0;
 static bool g_hasCameraCutout = false;
+static bool g_hasAccelerometer = false;
+static bool g_hasGyro = false;
 
 // Global ref. Written on the UI thread under g_activityLock. Other threads go through Android_GetActivity.
 static jobject ppssppActivity;
@@ -199,6 +210,10 @@ static void SetPermissionStatusFromJava(std::string_view name, PermissionStatus 
 }
 
 static GraphicsContext *graphicsContext;
+
+// The latest surface size from backbufferResize, width in the high half, for Vulkan to check the surface's extent
+// against. Atomic rather than under g_pendingResizeLock (below), since a resize applied directly can recreate the swapchain.
+static std::atomic<uint64_t> g_surfaceSize;
 
 #if PPSSPP_ARCH(ARMV7)
 // Old Android workaround
@@ -322,6 +337,11 @@ std::string System_GetProperty(SystemProperty prop) {
 		return langRegion;
 	case SYSPROP_BOARDNAME:
 		return boardName;
+	case SYSPROP_DEVICE_NAME:
+	{
+		std::lock_guard<std::mutex> guard(g_deviceNameLock);
+		return g_deviceName;
+	}
 	case SYSPROP_BUILD_VERSION:
 		return PPSSPP_GIT_VERSION;
 	case SYSPROP_INSTALLER_NAME:
@@ -404,6 +424,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return androidVersion >= 11;  // honeycomb
 	case SYSPROP_HAS_TEXT_CLIPBOARD:
 		return true;
+	case SYSPROP_HAS_DEEP_LINKS:
+		return true;  // The game's content URI, launchable through an intent.
 	case SYSPROP_CAN_LAUNCH_URL:
 		return true;
 	case SYSPROP_HAS_OPEN_DIRECTORY:
@@ -462,8 +484,14 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		}
 	case SYSPROP_HAS_KEYBOARD:
 		return deviceType != DEVICE_TYPE_VR;
+	case SYSPROP_KEYBOARD_IS_SOFT:
+		// Even with a hardware keyboard connected, the soft one can still be shown.
+		return true;
 	case SYSPROP_HAS_ACCELEROMETER:
-		return deviceType == DEVICE_TYPE_MOBILE;
+		// A headset has the sensors, but tilting it isn't tilt control.
+		return g_hasAccelerometer && deviceType != DEVICE_TYPE_VR;
+	case SYSPROP_HAS_GYRO:
+		return g_hasGyro && deviceType != DEVICE_TYPE_VR;
 	case SYSPROP_CAN_CREATE_SHORTCUT:
 		return false;  // We can't create shortcuts directly from game code, but we can from the Android UI.
 	case SYSPROP_DISPLAY_HAS_CAMERA_CUTOUT:
@@ -570,6 +598,10 @@ static std::string QueryConfig(std::string_view query) {
 		return g_Config.bSustainedPerformanceMode ? "1" : "0";
 	} else if (query == "audioMixWithOthers") {
 		return g_Config.bAudioMixWithOthers ? "1" : "0";
+	} else if (query == "externalDisplayOutput") {
+		// Whether the game goes to a second display, see ExternalDisplayPresentation.java. The running backend: the
+		// setting is already the new one while the restart prompt for a change is up.
+		return GetGPUBackend() == GPUBackend::VULKAN && g_Config.iExternalDisplay == (int)ExternalDisplayMode::SHOW_GAME ? "1" : "0";
 	} else {
 		return "";
 	}
@@ -581,6 +613,75 @@ extern "C" jstring Java_org_ppsspp_ppsspp_NativeApp_queryConfig
 	std::string result = QueryConfig(query);
 	jstring jresult = env->NewStringUTF(result.c_str());
 	return jresult;
+}
+
+// False if the config in memory may not be the user's: the ini couldn't be read (say the memory stick is on an
+// SD card that isn't mounted), or NativeInit couldn't reach the memory stick in memstick_dir.txt and fell
+// back to the default one, where an old ppsspp.ini may be lying around.
+static bool HaveUsersConfig() {
+	if (!g_Config.LoadedFromFile() || g_Config.memStickDirectory.empty()) {
+		return false;
+	}
+	const Path memstickDirFile = g_Config.internalDataDirectory / "memstick_dir.txt";
+	if (!File::Exists(memstickDirFile)) {
+		return true;
+	}
+	std::string memstickDir;
+	return File::ReadTextFileToString(memstickDirFile, &memstickDir) && Path(memstickDir) == g_Config.memStickDirectory;
+}
+
+// For ContentUri.manageUriGrants. Anything that stores the URI of a picked file or folder should be listed
+// here, or the grant for it may eventually be released. A grant is kept if it's one of these, or a folder
+// one of these is in. Returns null if we don't have the user's config, since then we don't know what's in use.
+extern "C" jobjectArray Java_org_ppsspp_ppsspp_NativeApp_getReferencedUris(JNIEnv *env, jclass) {
+	if (!HaveUsersConfig()) {
+		return nullptr;
+	}
+	std::vector<std::string> uris = g_recentFiles.GetRecentFiles();
+	uris.push_back(g_Config.memStickDirectory.ToString());
+	uris.push_back(g_Config.currentDirectory.ToString());
+	uris.push_back(g_Config.sRemoteISOSharedDir);
+	uris.insert(uris.end(), g_Config.vPinnedPaths.begin(), g_Config.vPinnedPaths.end());
+	uris.insert(uris.end(), g_Config.vShortcutUris.begin(), g_Config.vShortcutUris.end());
+	uris.push_back(g_Config.sAchievementsUnlockAudioFile);
+	uris.push_back(g_Config.sAchievementsLeaderboardSubmitAudioFile);
+	uris.erase(std::remove_if(uris.begin(), uris.end(), [](const std::string &uri) {
+		return !Android_IsContentUri(uri);
+	}), uris.end());
+
+	jclass stringClass = env->FindClass("java/lang/String");
+	jobjectArray result = env->NewObjectArray((jsize)uris.size(), stringClass, nullptr);
+	for (size_t i = 0; i < uris.size(); i++) {
+		jstring juri = env->NewStringUTF(uris[i].c_str());
+		env->SetObjectArrayElement(result, (jsize)i, juri);
+		env->DeleteLocalRef(juri);
+	}
+	env->DeleteLocalRef(stringClass);
+	return result;
+}
+
+// Only called from PpssppActivity.Initialize, before the render thread runs, so g_Config is ours to change.
+// Returns false if they couldn't be saved, so the Java side keeps them for next time.
+extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_addShortcutUris(JNIEnv *env, jclass, jobjectArray juris) {
+	if (!HaveUsersConfig()) {
+		return false;
+	}
+	const std::vector<std::string> before = g_Config.vShortcutUris;
+	const jsize count = env->GetArrayLength(juris);
+	// Oldest first, so the newest ends up at the front.
+	for (jsize i = 0; i < count; i++) {
+		jstring juri = (jstring)env->GetObjectArrayElement(juris, i);
+		std::string uri = GetJavaString(env, juri);
+		env->DeleteLocalRef(juri);
+		if (Android_IsContentUri(uri) && g_Config.AddShortcutUri(uri)) {
+			INFO_LOG(Log::System, "New home screen shortcut target: %s", uri.c_str());
+		}
+	}
+	// Also when only the order changed, so the ones launched lately aren't the first to go.
+	if (g_Config.vShortcutUris != before) {
+		return g_Config.Save("ShortcutUrisAdded");
+	}
+	return true;
 }
 
 // Need to use raw Android logging before NativeInit.
@@ -723,6 +824,10 @@ retry:
 			delete ctx;
 			goto retry;
 		}
+		((VulkanContext *)ctx->GetAPIContext())->SetCbGetDrawSize([]() {
+			const uint64_t size = g_surfaceSize;
+			return VkExtent2D{ (uint32_t)(size >> 32), (uint32_t)size };
+		});
 		graphicsContext = ctx;
 		// Now, we wait until we get a surface to continue initializing Vulkan.
 		break;
@@ -892,6 +997,58 @@ static void ApplyPendingResize() {
 	}
 }
 
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDeviceName(JNIEnv *env, jclass, jstring jname) {
+	std::string name = jname ? GetJavaString(env, jname) : "";
+	std::lock_guard<std::mutex> guard(g_deviceNameLock);
+	g_deviceName = name;
+}
+
+// Secondary outputs (a TV on HDMI, for one). The surface's window is kept until the output is removed.
+static std::mutex g_outputWindowsLock;
+static std::map<int, ANativeWindow *> g_outputWindows;
+
+extern "C" jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_addOutput(JNIEnv *env, jclass, jobject surface, jint width, jint height) {
+	ANativeWindow *wnd = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
+	if (!wnd) {
+		ERROR_LOG(Log::G3D, "addOutput: no window for the surface");
+		return 0;
+	}
+	Draw::SwapchainDesc desc{};
+	desc.winsys = WINDOWSYSTEM_ANDROID;
+	desc.data1 = wnd;
+	desc.width = width;
+	desc.height = height;
+	desc.tag = "ExternalDisplay";
+	const int id = Native_AddOutput(OutputRole::Game, desc);
+	INFO_LOG(Log::G3D, "addOutput: %dx%d, output %d", width, height, id);
+	std::lock_guard<std::mutex> guard(g_outputWindowsLock);
+	g_outputWindows[id] = wnd;
+	return id;
+}
+
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_resizeOutput(JNIEnv *, jclass, jint id, jint width, jint height) {
+	INFO_LOG(Log::G3D, "resizeOutput: output %d, %dx%d", id, width, height);
+	Native_ResizeOutput(id, width, height);
+}
+
+// Returns once the render thread is done with the surface, as surfaceDestroyed requires.
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_removeOutput(JNIEnv *, jclass, jint id) {
+	INFO_LOG(Log::G3D, "removeOutput: output %d", id);
+	Native_RemoveOutputAndWait(id);
+	ANativeWindow *wnd = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(g_outputWindowsLock);
+		auto iter = g_outputWindows.find(id);
+		if (iter != g_outputWindows.end()) {
+			wnd = iter->second;
+			g_outputWindows.erase(iter);
+		}
+	}
+	if (wnd) {
+		ANativeWindow_release(wnd);
+	}
+}
+
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint pixel_xres, jint pixel_yres, jint rotation) {
 	INFO_LOG(Log::System, "NativeApp.backbufferResize(%d x %d, rotation %d)", pixel_xres, pixel_yres, rotation);
 
@@ -900,6 +1057,8 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv
 	static int lastRotation = -1;
 	const bool rotated = lastRotation != -1 && rotation != lastRotation;
 	lastRotation = rotation;
+
+	g_surfaceSize = ((uint64_t)(uint32_t)pixel_xres << 32) | (uint32_t)pixel_yres;
 
 	// pixel_*res is the backbuffer resolution.
 	if (IsVREnabled()) {
@@ -948,6 +1107,9 @@ void System_Notify(SystemNotification notification) {
 		break;
 	case SystemNotification::SUSTAINED_PERF_CHANGE:
 		PushCommand("sustainedPerfMode", "");
+		break;
+	case SystemNotification::EXTERNAL_DISPLAY_CHANGED:
+		PushCommand("externalDisplay", "");
 		break;
 	case SystemNotification::TEST_JAVA_EXCEPTION:
 		PushCommand("testException", "This is a test exception");
@@ -1035,6 +1197,9 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 	case SystemRequestType::SHARE_FILE:
 		// The MIME type first, as a path could contain the separator.
 		PushCommand("share_file", param2 + ":@:" + param1);
+		return true;
+	case SystemRequestType::SET_SOFT_KEYBOARD_FORCED:
+		PushCommand("forceKeyboard", !param3 ? "off" : (param4 ? "persist" : "on"));
 		return true;
 	case SystemRequestType::SET_KEEP_SCREEN_BRIGHT:
 		PushCommand("set_keep_screen_bright", param3 ? "on" : "off");
@@ -1263,6 +1428,12 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_accelerometer(JNIEnv *,
 	NativeAccelerometer(x, y, z);
 }
 
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_gyroscope(JNIEnv *, jclass, float x, float y, float z, jlong timestampNs) {
+	if (!renderer_inited)
+		return;
+	NativeGyroscope(x, y, z, (double)timestampNs * 1e-9);
+}
+
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNIEnv *env, jclass, jstring jmessage, jstring jparam) {
 	std::string msg = GetJavaString(env, jmessage);
 	std::string prm = GetJavaString(env, jparam);
@@ -1278,6 +1449,8 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNI
 	} else if (msg == "permission_granted") {
 		SetPermissionStatusFromJava(prm, PERMISSION_STATUS_GRANTED);
 		System_PostUIMessage(UIMessage::PERMISSION_GRANTED, prm);
+	} else if (msg == "softKeyboardHidden") {
+		System_PostUIMessage(UIMessage::SOFT_KEYBOARD_HIDDEN);
 	} else if (msg == "sustained_perf_supported") {
 		sustainedPerfSupported = true;
 	} else if (msg == "safe_insets") {
@@ -1290,6 +1463,12 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNI
 			g_safeInsetTop = (float)top;
 			g_safeInsetBottom = (float)bottom;
 			g_hasCameraCutout = cutout != 0;
+		}
+	} else if (msg == "sensors") {
+		int accelerometer, gyro;
+		if (2 == sscanf(prm.c_str(), "%d:%d", &accelerometer, &gyro)) {
+			g_hasAccelerometer = accelerometer != 0;
+			g_hasGyro = gyro != 0;
 		}
 	} else if (msg == "inputDeviceConnectedID") {
 		nextInputDeviceID = (InputDeviceID)parseLong(prm);

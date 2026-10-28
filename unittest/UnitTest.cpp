@@ -33,19 +33,26 @@
 // build/unittest EscapeMenuString
 
 #include "ppsspp_config.h"
-
 #include <typeinfo>
 
-#include <algorithm>
+// To avoid warnings, this should go first.
+#include "Common/Net/SocketCompat.h"
+
 #include <atomic>
+#include <cmath>
+#include <algorithm>
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
-#include <memory>
 #include <vector>
 #include <string>
 #include <sstream>
+
+#include <map>
 #include <unordered_map>
+#include <set>
+#include <list>
+
 
 #if PPSSPP_PLATFORM(ANDROID)
 #include <jni.h>
@@ -87,18 +94,16 @@
 #include "Common/Log.h"
 #include "Common/StringUtils.h"
 #include "Core/Config.h"
+#include "Core/ConfigSettings.h"
 #include "Common/Data/Convert/ColorConv.h"
 #include "Common/File/VFS/VFS.h"
-#include "Common/File/VFS/DirectoryReader.h"
 #include "Common/Math/fast/fast_matrix.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Serialize/SerializeMap.h"
 #include "Common/Serialize/SerializeSet.h"
 #include "Common/Serialize/SerializeList.h"
-#include <map>
-#include <set>
-#include <list>
+
 #include "Core/CmdLine.h"
 #include "Core/System.h"
 #include "Common/Data/Collections/Hashmaps.h"
@@ -112,6 +117,9 @@
 #include "Core/FileLoaders/CachingFileLoader.h"
 #include "Core/FileSystems/FileSystem.h"
 #include "Core/FileSystems/ISOFileSystem.h"
+#include "Core/FileSystems/DirectoryFileSystem.h"
+#include "Core/HLE/sceUmd.h"
+#include "Core/Loaders.h"
 #include "Core/MemMap.h"
 #include "Core/KeyMap.h"
 #include "Core/ControlMapper.h"
@@ -123,10 +131,14 @@
 #include "GPU/Common/DepthSwizzle.h"
 #include "GPU/Common/TextureDecoder.h"
 #include "GPU/Common/GPUStateUtils.h"
+#include "GPU/Common/Overlay.h"
 #include "GPU/Math3D.h"
 
 #include "Common/File/AndroidContentURI.h"
 #include "Common/System/Request.h"
+#include "Common/Render/AtlasGen.h"
+#include "Common/Render/Text/draw_text.h"
+#include "Common/Net/Resolve.h"
 
 #include "unittest/JitHarness.h"
 #include "unittest/TestVertexJit.h"
@@ -227,6 +239,60 @@ bool TestMathUtil() {
 	volatile float zero = 0.0f;
 	EXPECT_TRUE(my_isinf(1.0f/zero));
 	EXPECT_FALSE(my_isnan(1.0f/zero));
+	return true;
+}
+
+bool TestInetPton() {
+	uint8_t ip4[4];
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "1.2.3.4", ip4), 1);
+	EXPECT_TRUE(ip4[0] == 1 && ip4[1] == 2 && ip4[2] == 3 && ip4[3] == 4);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "1.2.3", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "1.2.3.4.5", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "256.1.1.1", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "1..2.3", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, ".1.2.3", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "1.2.3.", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET, "", ip4), 0);
+	EXPECT_EQ_INT(net::inet_pton(-1, "1.2.3.4", ip4), -1);
+
+	// Bytes in network order.
+	uint8_t ip6[16];
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "::1", ip6), 1);
+	for (int i = 0; i < 15; i++) {
+		EXPECT_EQ_INT(ip6[i], 0);
+	}
+	EXPECT_EQ_INT(ip6[15], 1);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "::", ip6), 1);
+	EXPECT_EQ_INT(ip6[15], 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "fe80::1:2", ip6), 1);
+	EXPECT_TRUE(ip6[0] == 0xFE && ip6[1] == 0x80 && ip6[2] == 0 && ip6[11] == 0);
+	EXPECT_TRUE(ip6[12] == 0 && ip6[13] == 1 && ip6[14] == 0 && ip6[15] == 2);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3:4:5:6:7:8", ip6), 1);
+	EXPECT_TRUE(ip6[1] == 1 && ip6[15] == 8);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "::2:3:4:5:6:7:8", ip6), 1);
+	EXPECT_TRUE(ip6[0] == 0 && ip6[1] == 0 && ip6[3] == 2 && ip6[15] == 8);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3:4:5:6:7::", ip6), 1);
+	EXPECT_TRUE(ip6[13] == 7 && ip6[14] == 0 && ip6[15] == 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3::4:5:6:7", ip6), 1);
+	EXPECT_TRUE(ip6[5] == 3 && ip6[6] == 0 && ip6[7] == 0 && ip6[9] == 4 && ip6[15] == 7);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "FFFF::abcd", ip6), 1);
+	EXPECT_TRUE(ip6[0] == 0xFF && ip6[1] == 0xFF && ip6[14] == 0xAB && ip6[15] == 0xCD);
+
+	// These used to write outside the 16 bytes.
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1::2::3", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, ":::::::::", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3:4:5:6:7:8::", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3:4:5:6:7:8:9", ip6), 0);
+
+	// Other malformed ones.
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1::2:3:4:5:6:7:8", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, ":::", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, ":1::", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "12345::", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "1:2:3:4:5:6:7", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "::ffff:1.2.3.4", ip6), 0);
+	EXPECT_EQ_INT(net::inet_pton(AF_INET6, "", ip6), 0);
 	return true;
 }
 
@@ -821,6 +887,33 @@ bool TestSerializer() {
 	return true;
 }
 
+bool TestLogFileOpen() {
+	// Creating the log file's folder logs, which used to deadlock on the log file lock.
+	const Path dir = UnitTestTempPath("unittest_log_file");
+	File::DeleteDirRecursively(dir);
+	const Path logPath = dir / "sub" / "log.txt";
+
+	const LogOutput outputs = g_logManager.GetOutputsEnabled();
+	const LogLevel ioLevel = g_logManager.GetLogLevel(Log::IO);
+	const bool ioEnabled = g_logManager.GetLogChannel(Log::IO)->enabled;
+	g_logManager.SetLogLevel(Log::IO, LogLevel::LVERBOSE);
+	g_logManager.SetEnabled(Log::IO, true);
+
+	g_logManager.SetFileLogPath(logPath);
+	g_logManager.EnableOutput(LogOutput::File);
+	INFO_LOG(Log::IO, "Log file test");
+	bool exists = File::Exists(logPath);
+
+	g_logManager.SetOutputsEnabled(outputs);
+	g_logManager.SetFileLogPath(Path());
+	g_logManager.SetLogLevel(Log::IO, ioLevel);
+	g_logManager.SetEnabled(Log::IO, ioEnabled);
+	File::DeleteDirRecursively(dir);
+
+	EXPECT_TRUE(exists);
+	return true;
+}
+
 bool TestMemBlockInfoSaveState() {
 	MemBlockInfoInit();
 	MemBlockOverrideDetailed();
@@ -855,6 +948,33 @@ bool TestMemBlockInfoSaveState() {
 	NotifyMemInfo(MemBlockFlags::ALLOC, 0x08800100, 0x10, "SplitTag", 8);
 	auto results = FindMemInfo(0x08800000, 0x20000);
 	EXPECT_TRUE(!results.empty());
+
+	MemBlockReleaseDetailed();
+	MemBlockInfoShutdown();
+	return true;
+}
+
+bool TestMemBlockInfoRangeWrap() {
+	MemBlockInfoInit();
+	MemBlockOverrideDetailed();
+
+	// Sizes come from the game. One that wraps around 32 bits used to leave a slab that ends
+	// before it starts, hidden from lookups, and later marks crashed on it.
+	NotifyMemInfo(MemBlockFlags::WRITE, 0x08800800, 0xFFFFF000, "Wrap", 4);
+	NotifyMemInfo(MemBlockFlags::WRITE, 0x3FFFF000, 0x2000, "PastEnd", 7);
+
+	auto findWrite = [](uint32_t addr, const char *tag) {
+		std::vector<MemBlockInfo> results = FindMemInfoByFlag(MemBlockFlags::WRITE, addr, 1);
+		return results.size() == 1 && results[0].tag == tag && results[0].start + results[0].size > results[0].start;
+	};
+	EXPECT_TRUE(findWrite(0x08800800, "Wrap"));
+	EXPECT_TRUE(findWrite(0x20000000, "Wrap"));
+	EXPECT_TRUE(findWrite(0x3FFFFFFF, "PastEnd"));
+
+	// Splitting the clamped slab again works too.
+	NotifyMemInfo(MemBlockFlags::WRITE, 0x08900000, 0x1000, "Inside", 6);
+	EXPECT_TRUE(findWrite(0x08900000, "Inside"));
+	EXPECT_TRUE(findWrite(0x08901000, "Wrap"));
 
 	MemBlockReleaseDetailed();
 	MemBlockInfoShutdown();
@@ -2623,6 +2743,15 @@ static bool TestPath() {
 	EXPECT_EQ_STR(Path(R"(\\host\share\filename)").GetRootVolume().ToString(), std::string("//host"));
 	EXPECT_EQ_STR(Path(R"(\\?\UNC\share\filename)").GetRootVolume().ToString(), std::string("//?/UNC"));
 	EXPECT_EQ_STR(Path(R"(\\?\C:\share\filename)").GetRootVolume().ToString(), std::string("//?/C:"));
+
+	// The network folder, and navigating through it.
+	EXPECT_TRUE(Path(R"(\\)").IsNetworkRoot());
+	EXPECT_EQ_STR(Path(R"(\\host\share)").NavigateUp().ToString(), std::string("//host"));
+	EXPECT_EQ_STR(Path(R"(\\host)").NavigateUp().ToString(), std::string("//"));
+	EXPECT_TRUE(Path("//").CanNavigateUp());
+	EXPECT_EQ_STR(Path("//").NavigateUp().ToString(), std::string("/"));
+	EXPECT_EQ_STR((Path("//") / "host").ToString(), std::string("//host"));
+	EXPECT_EQ_STR(Path("//").GetRootVolume().ToString(), std::string("/"));
 #endif
 
 	std::string computedPath;
@@ -3146,6 +3275,30 @@ bool TestVolumeFunc() {
 	return true;
 }
 
+// The info setters have to work in constant expressions, since the config tables are constexpr.
+static constexpr const char *testChoices[] = { "Off", "On", "Auto" };
+static constexpr ConfigSetting testSliderSetting = ConfigSetting("TestSlider", ConfigSettingOffset<int>{ 0 }, 50, CfgFlag::DEFAULT)
+	.Label(I18NCat::AUDIO, "Test slider").Range(0, 100, 5).Units("%").ZeroLabel("Off").NegativeLabel("Disabled");
+static_assert(testSliderSetting.Info().HasRange() && !testSliderSetting.Info().HasChoices());
+static_assert(testSliderSetting.Info().zeroLabel && testSliderSetting.Info().negativeLabel);
+static constexpr ConfigSetting testChoiceSetting = ConfigSetting("TestChoice", ConfigSettingOffset<int>{ 0 }, 1, CfgFlag::DEFAULT)
+	.Label(I18NCat::AUDIO, "Test choice").Choices(testChoices, 1);
+static_assert(testChoiceSetting.Info().choiceCount == 3 && testChoiceSetting.Info().choiceMin == 1 && !testChoiceSetting.Info().HasRange());
+
+bool TestConfigSettings() {
+	g_Config.Init();
+
+	const ConfigSettingRef *ref = Config::FindSetting(&g_Config.iUIVolume);
+	EXPECT_TRUE(ref && ref->setting->IniKey() == "UIVolume");
+	EXPECT_EQ_INT(Config::GetDefaultValueInt(&g_Config.iUIVolume), 75);
+
+	// Blocks that reset as a whole, where the default can depend on which block it is.
+	EXPECT_EQ_FLOAT(Config::GetDefaultValueFloat(&g_Config.displayLayoutLandscape.fDisplayOffsetY), 0.5f);
+	EXPECT_EQ_FLOAT(Config::GetDefaultValueFloat(&g_Config.displayLayoutPortrait.fDisplayOffsetY), 0.25f);
+	EXPECT_EQ_INT(Config::GetDefaultValueInt(&g_Config.gestureControls[1].iSwipeUp), 0);
+	return true;
+}
+
 bool TestLinAlg() {
 	static const float m1[16] = {
 		1, 2, 3, 4,
@@ -3244,6 +3397,43 @@ bool TestFriendlyPath() {
 	return true;
 }
 
+bool TestUmdDiscType() {
+	const Path root = UnitTestTempPath("unittest_umd_disc_type");
+	// Builds a disc out of the given files (a trailing slash makes a directory) and detects its type.
+	auto detect = [&](const std::vector<std::pair<std::string, std::string>> &files) {
+		File::DeleteDirRecursively(root);
+		File::CreateDir(root);
+		for (const auto &[name, contents] : files) {
+			if (endsWith(name, "/")) {
+				File::CreateFullPath(root / name.substr(0, name.size() - 1));
+			} else {
+				File::CreateFullPath((root / name).NavigateUp());
+				File::WriteStringToFile(false, contents, root / name);
+			}
+		}
+		SequentialHandleAllocator handles;
+		DirectoryFileSystem fs(&handles, root);
+		return DetectUmdDiscType(&fs, "");
+	};
+
+	const u32 G = PSP_UMD_TYPE_GAME, V = PSP_UMD_TYPE_VIDEO, A = PSP_UMD_TYPE_AUDIO;
+	// UMD_DATA.BIN says what's there, as on the EUR Video Demo Disc.
+	EXPECT_EQ_INT(detect({ { "UMD_DATA.BIN", "UCJB-98302|4BCA8BE1C6F3904D|0002|GVA" }, { "PSP_GAME/SYSDIR/EBOOT.BIN", "x" }, { "UMD_VIDEO/", "" }, { "UMD_AUDIO/", "" } }), G | V | A);
+	EXPECT_EQ_INT(detect({ { "UMD_DATA.BIN", "THE_BOURNE_SUPREMACY_SKU1|6|0002|V" }, { "UMD_VIDEO/", "" } }), V);
+	// Scene releases append text after the type.
+	EXPECT_EQ_INT(detect({ { "UMD_DATA.BIN", "NPUH-10123|420B60F2BB73D289|0001|G             |\r\nPatched" }, { "PSP_GAME/SYSDIR/EBOOT.BIN", "x" } }), G);
+	// A video disc whose PSP_GAME is only a firmware update is no game (#22737), with or without UMD_DATA.BIN.
+	EXPECT_EQ_INT(detect({ { "PSP_GAME/SYSDIR/UPDATE/EBOOT.PBP", "x" }, { "UMD_VIDEO/", "" } }), V);
+	EXPECT_EQ_INT(detect({ { "UMD_DATA.BIN", "UMDV-12345|0000000000000000|0001|GV" }, { "PSP_GAME/SYSDIR/UPDATE/EBOOT.PBP", "x" }, { "UMD_VIDEO/", "" } }), V);
+	// Without UMD_DATA.BIN, the directories decide, and a lone PSP_GAME is a game whatever's in it.
+	EXPECT_EQ_INT(detect({ { "PSP_GAME/SYSDIR/EBOOT.BIN", "x" } }), G);
+	EXPECT_EQ_INT(detect({ { "PSP_GAME/SYSDIR/BOOT.BIN", "x" } }), G);
+	EXPECT_EQ_INT(detect({ { "README.TXT", "x" } }), 0);
+
+	File::DeleteDirRecursively(root);
+	return true;
+}
+
 bool TestGEDumpGameID() {
 	std::string id;
 	// PPSSPP's own dump names.
@@ -3333,6 +3523,33 @@ bool TestCmdLine() {
 		EXPECT_TRUE(options.memStickInserted.has_value());
 		EXPECT_FALSE(options.memStickInserted.value_or(true));
 	}
+	// Integers take decimal or 0x hex. A leading 0 is still decimal, and a full 32-bit mask wraps
+	// into the int rather than being refused.
+	{
+		const char *argv[] = {
+			"ppsspp",
+			"--disable-hle=0x110",
+			"--force-hle=0xFFFFFFFF",
+			"--cpu-mhz=0333",
+			"--resolution-scale=-2",
+		};
+		int argc = ARRAY_SIZE(argv);
+		CommandLineOptions options;
+		EXPECT_EQ_INT((int)options.Parse(argc, argv, CmdLineMode::Headless), (int)CommandLineParseResult::Continue);
+		EXPECT_EQ_INT(options.disableHLE.value_or(0), 0x110);
+		EXPECT_EQ_INT(options.forceHLE.value_or(0), -1);
+		EXPECT_EQ_INT(options.lockedCPUSpeed.value_or(0), 333);
+		EXPECT_EQ_INT(options.resolutionScale.value_or(0), -2);
+	}
+	// Trailing junk used to be ignored, so 0x110 quietly meant 0.
+	{
+		const char *bad[] = { "--disable-hle=0x110junk", "--disable-hle=12abc", "--disable-hle=0x", "--disable-hle= 5", "--disable-hle=0x100000000", "--disable-hle=--1" };
+		for (const char *arg : bad) {
+			const char *argv[] = { "ppsspp", arg };
+			CommandLineOptions options;
+			EXPECT_EQ_INT((int)options.Parse(ARRAY_SIZE(argv), argv, CmdLineMode::Headless), (int)CommandLineParseResult::Error);
+		}
+	}
 	// Test GL version override
 	{
 		const char *argv[] = {
@@ -3358,6 +3575,52 @@ bool TestLang() {
 	return true;
 }
 
+static bool TestOverlayHole() {
+	const int W = 64, H = 48;
+	std::vector<uint8_t> img(W * H * 4);
+	auto fill = [&](int x0, int y0, int x1, int y1, uint8_t a) {
+		for (int y = y0; y < y1; y++)
+			for (int x = x0; x < x1; x++)
+				img[(y * W + x) * 4 + 3] = a;
+	};
+	int x, y, w, h;
+
+	// Opaque frame with a transparent hole at 8,4 size 40x30 (contains the center 32,24).
+	fill(0, 0, W, H, 255);
+	fill(8, 4, 48, 34, 0);
+	EXPECT_TRUE(DetectOverlayHole(img.data(), W, H, &x, &y, &w, &h));
+	EXPECT_EQ_INT(x, 8);
+	EXPECT_EQ_INT(y, 4);
+	EXPECT_EQ_INT(w, 40);
+	EXPECT_EQ_INT(h, 30);
+
+	// A semi-transparent glare over the screen area and soft edges still count as the hole.
+	fill(20, 10, 40, 30, 200);
+	fill(7, 4, 8, 34, 128);
+	EXPECT_TRUE(DetectOverlayHole(img.data(), W, H, &x, &y, &w, &h));
+	EXPECT_EQ_INT(x, 7);
+	EXPECT_EQ_INT(w, 41);
+
+	// Fully transparent image: the hole is the whole image.
+	fill(0, 0, W, H, 0);
+	EXPECT_TRUE(DetectOverlayHole(img.data(), W, H, &x, &y, &w, &h));
+	EXPECT_EQ_INT(x, 0);
+	EXPECT_EQ_INT(y, 0);
+	EXPECT_EQ_INT(w, W);
+	EXPECT_EQ_INT(h, H);
+
+	// Hole not covering the center: no valid start point.
+	fill(0, 0, W, H, 255);
+	fill(0, 0, 30, 20, 0);
+	EXPECT_FALSE(DetectOverlayHole(img.data(), W, H, &x, &y, &w, &h));
+
+	// Tiny hole is rejected.
+	fill(0, 0, W, H, 255);
+	fill(30, 22, 36, 28, 0);
+	EXPECT_FALSE(DetectOverlayHole(img.data(), W, H, &x, &y, &w, &h));
+	return true;
+}
+
 typedef bool (*TestFunc)();
 struct TestItem {
 	const char *name;
@@ -3380,6 +3643,7 @@ bool TestThreadManager();
 bool TestVFS();
 bool TestZipSlip();
 bool TestZArchive();
+bool TestPS1Eboot();
 bool TestLzrc();
 bool TestCwCheat();
 bool TestMpegCsc();
@@ -3473,6 +3737,133 @@ bool TestFatShortNames() {
 	EXPECT_EQ_STR(collide[0], std::string("LONGNA~1.TXT"));
 	EXPECT_EQ_STR(collide[1], std::string("LONGNA~2.TXT"));
 
+	return true;
+}
+
+// A TextDrawer whose "font" is ten units per byte and twenty per line, so we can test the
+// shared caching and wrapping logic without a platform font backend.
+class FakeTextDrawer : public TextDrawer {
+public:
+	FakeTextDrawer() : TextDrawer(nullptr) {}
+
+	void TestDropShadow(std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat srcFormat) {
+		AddDropShadow(bitmapData, entry, srcFormat);
+	}
+
+	int measureCalls = 0;
+
+protected:
+	void EnsureFont(const FontStyle &style) override {}
+	bool DrawStringBitmap(const FontStyle &style, std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat texFormat, std::string_view str, int align, bool fullColor) override { return false; }
+	void MeasureStringInternal(const FontStyle &style, std::string_view str, float *w, float *h) override {
+		measureCalls++;
+		std::vector<std::string_view> lines;
+		SplitString(str, '\n', lines);
+		int maxLen = 0;
+		for (auto line : lines) {
+			maxLen = std::max(maxLen, (int)line.size());
+		}
+		*w = maxLen * 10.0f;
+		*h = lines.size() * 20.0f;
+	}
+	bool SupportsColorEmoji() const override { return false; }
+	void ClearFonts() override {}
+};
+
+bool TestTextDrawerCache() {
+	FakeTextDrawer drawer;
+	drawer.SetForcedDPIScale(1.0f);
+	const FontStyle font20(FontFamily::SansSerif, 20, FontStyleFlags::Default);
+	const FontStyle font30(FontFamily::SansSerif, 30, FontStyleFlags::Default);
+
+	float w, h;
+	drawer.MeasureString(font20, 1.0f, 1.0f, "hello", &w, &h);
+	EXPECT_EQ_FLOAT(w, 50.0f);
+	EXPECT_EQ_FLOAT(h, 20.0f);
+	drawer.MeasureString(font20, 1.0f, 1.0f, "hello", &w, &h);
+	EXPECT_EQ_INT(drawer.measureCalls, 1);
+
+	// A different style is a different cache entry, but a different scale isn't.
+	drawer.MeasureString(font30, 1.0f, 1.0f, "hello", &w, &h);
+	EXPECT_EQ_INT(drawer.measureCalls, 2);
+	drawer.MeasureString(font30, 2.0f, 2.0f, "hello", &w, &h);
+	EXPECT_EQ_FLOAT(w, 100.0f);
+	EXPECT_EQ_INT(drawer.measureCalls, 2);
+
+	const std::string_view para = "The quick brown fox jumps over the lazy dog, and then it does it again, and again, until the dog finally gets up and leaves.";
+	drawer.MeasureStringRect(font30, 1.0f, 1.0f, para, 200.0f, &w, &h, FLAG_WRAP_TEXT);
+	// The trailing space of a wrapped line is measured too.
+	EXPECT_TRUE(w <= 210.0f);
+	EXPECT_TRUE(h > 20.0f);
+	float w2, h2;
+	int callsBefore = drawer.measureCalls;
+	drawer.MeasureStringRect(font30, 1.0f, 1.0f, para, 200.0f, &w2, &h2, FLAG_WRAP_TEXT);
+	EXPECT_EQ_FLOAT(w, w2);
+	EXPECT_EQ_FLOAT(h, h2);
+	EXPECT_EQ_INT(drawer.measureCalls, callsBefore);
+
+	// Scaling the font changes where the text wraps.
+	drawer.MeasureStringRect(font30, 0.5f, 0.5f, para, 200.0f, &w2, &h2, FLAG_WRAP_TEXT);
+	EXPECT_TRUE(h2 < h * 0.5f);
+
+	drawer.MeasureStringRect(font30, 1.0f, 1.0f, para, 200.0f, &w, &h, FLAG_ELLIPSIZE_TEXT);
+	EXPECT_EQ_FLOAT(h, 20.0f);
+	EXPECT_TRUE(w <= 200.0f);
+
+	// An 8x8 square of coverage in a 16x16 bitmap.
+	auto shadowTest = [&](float dpiScale, TextStringEntry &entry, std::vector<uint8_t> &bitmap) {
+		drawer.SetForcedDPIScale(dpiScale);
+		entry.width = entry.height = entry.bmWidth = entry.bmHeight = 16;
+		bitmap.assign(16 * 16, 0);
+		for (int y = 4; y < 12; y++) {
+			memset(&bitmap[y * 16 + 4], 0xFF, 8);
+		}
+		drawer.TestDropShadow(bitmap, entry, Draw::DataFormat::R8_UNORM);
+	};
+	TextStringEntry entry1(0), entry2(0);
+	std::vector<uint8_t> bitmap;
+	shadowTest(1.0f, entry1, bitmap);
+	const int pad = entry1.shadowPad;
+	EXPECT_TRUE(pad > 0);
+	EXPECT_EQ_INT(entry1.width, 16);
+	EXPECT_TRUE(entry1.bmWidth >= 16 + pad * 2 && (entry1.bmWidth & 3) == 0);
+	EXPECT_EQ_INT((int)bitmap.size(), entry1.bmWidth * entry1.bmHeight * 4);
+	const uint32_t *pixels = (const uint32_t *)bitmap.data();
+	auto pixel = [&](int x, int y) { return pixels[(y + pad) * entry1.bmWidth + x + pad]; };
+	// The text stays opaque white, the shadow around it is black and partly transparent, and the far corner is empty.
+	EXPECT_EQ_INT(pixel(8, 8), 0xFFFFFFFF);
+	EXPECT_EQ_INT(pixel(12, 12) & 0x00FFFFFF, 0);
+	EXPECT_TRUE((pixel(12, 12) >> 24) > 0);
+	EXPECT_EQ_INT(pixel(-pad, -pad), 0);
+	// Higher DPI means more pixels per UI unit, so a bigger blur in pixels.
+	shadowTest(0.5f, entry2, bitmap);
+	EXPECT_TRUE(entry2.shadowPad > pad);
+	return true;
+}
+
+// The UI shadow has no offset, so it pads the image evenly and stays symmetric around it.
+bool TestAtlasDropShadow() {
+	Image img;
+	img.scale = 2.0f;
+	img.resize(8, 8);
+	for (int y = 2; y < 6; y++) {
+		for (int x = 2; x < 6; x++) {
+			img.set1(x, y, 0xFFFFFFFF);
+		}
+	}
+	AddDropShadow(img, UIDropShadowParams(img.scale));
+	EXPECT_EQ_INT(img.w, 8 + 12);
+	EXPECT_EQ_INT(img.h, 8 + 12);
+	EXPECT_EQ_HEX(img.get1(6 + 3, 6 + 3), 0xFFFFFFFF);
+	EXPECT_EQ_HEX(img.get1(0, 0), 0);
+	for (int y = 0; y < img.h; y++) {
+		for (int x = 0; x < img.w; x++) {
+			EXPECT_EQ_HEX(img.get1(x, y), img.get1(img.w - 1 - x, img.h - 1 - y));
+		}
+	}
+	const u32 edge = img.get1(5, 10);
+	EXPECT_EQ_INT(edge & 0xFFFFFF, 0);
+	EXPECT_TRUE((edge >> 24) > 0 && (edge >> 24) < 0xA8);
 	return true;
 }
 
@@ -3722,6 +4113,8 @@ TestItem availableTests[] = {
 	TEST_ITEM(Parsers),
 	TEST_ITEM(TruncateCpy),
 	TEST_ITEM(MemBlockInfoSaveState),
+	TEST_ITEM(MemBlockInfoRangeWrap),
+	TEST_ITEM(LogFileOpen),
 	TEST_ITEM(Serializer),
 	TEST_ITEM(BlockAllocator),
 	TEST_ITEM(SymbolMap),
@@ -3734,6 +4127,13 @@ TestItem availableTests[] = {
 	TEST_ITEM(Jit),
 	TEST_ITEM(JitDotBench),
 	TEST_ITEM(JitReplacementHooks),
+	TEST_ITEM(CPUEret),
+	TEST_ITEM(MMIO),
+	TEST_ITEM(MESpace),
+	TEST_ITEM(MeCore),
+	TEST_ITEM(MeInterrupts),
+	TEST_ITEM(MeWait),
+	TEST_ITEM(MeDmacplus),
 	TEST_ITEM(CPUEquivalence),
 	TEST_ITEM(CPURoundingMode),
 	TEST_ITEM(VFPUDotJit),
@@ -3746,6 +4146,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(BlockShadow),
 	TEST_ITEM(ShaderGenerators),
 	TEST_ITEM(Path),
+	TEST_ITEM(OverlayHole),
 	TEST_ITEM(AndroidContentURI),
 	TEST_ITEM(ThreadManager),
 	TEST_ITEM(WrapText),
@@ -3764,6 +4165,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(SIMD),
 	TEST_ITEM(CrossSIMD),
 	TEST_ITEM(VolumeFunc),
+	TEST_ITEM(ConfigSettings),
 	TEST_ITEM(SplitSearch),
 	TEST_ITEM(FriendlyPath),
 	TEST_ITEM(LinAlg),
@@ -3771,6 +4173,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(CmdLine),
 	TEST_ITEM(ZipSlip),
 	TEST_ITEM(ZArchive),
+	TEST_ITEM(PS1Eboot),
 	TEST_ITEM(Lzrc),
 	TEST_ITEM(CwCheat),
 	TEST_ITEM(MpegCsc),
@@ -3781,11 +4184,15 @@ TestItem availableTests[] = {
 	TEST_ITEM(TextureReplacer),
 	TEST_ITEM(UITabOrder),
 	TEST_ITEM(UIFocusNavigation),
+	TEST_ITEM(TextDrawerCache),
+	TEST_ITEM(AtlasDropShadow),
 	TEST_ITEM(FatShortNames),
 	TEST_ITEM(GEDumpGameID),
+	TEST_ITEM(UmdDiscType),
 	TEST_ITEM(QueueBuf),
 	TEST_ITEM(RequestManager),
 	TEST_ITEM(StackWalk),
+	TEST_ITEM(InetPton),
 };
 
 int main(int argc, const char *argv[]) {

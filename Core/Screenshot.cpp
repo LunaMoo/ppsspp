@@ -464,7 +464,8 @@ bool Save8888RGBAScreenshot(std::vector<uint8_t> &bufferPNG, const u8 *bufferRGB
 
 	png_alloc_size_t allocSize = bufferPNG.size();
 	int result = png_image_write_to_memory(&png, allocSize == 0 ? nullptr : bufferPNG.data(), &allocSize, 0, bufferRGBA8888, w * 4, nullptr);
-	bool success = result != 0 && png.warning_or_error <= 1;
+	// Without a buffer, that only measured it.
+	bool success = !bufferPNG.empty() && result != 0 && png.warning_or_error <= 1;
 	if (!success && allocSize != bufferPNG.size()) {
 		bufferPNG.resize(allocSize);
 		png.warning_or_error = 0;
@@ -525,6 +526,9 @@ void TakeUserScreenshot() {
 	if (GetUIState() != UISTATE_INGAME) {
 		// We're out in the UI, no game. The only type of screenshot available is output.
 		type = ScreenshotType::Output;
+	} else if (gpu && gpu->PresentsToOtherOutput()) {
+		// The game is on a TV. The device's own screen only has the controls on it.
+		type = ScreenshotType::Display;
 	}
 
 	// Close any active popups, so they don't end up in the screenshot.

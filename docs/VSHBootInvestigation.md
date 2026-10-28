@@ -14,7 +14,7 @@ finds the debugger port, connects, and cleans up after itself - no wrapper scrip
 ```bash
 printf 'cpu.runUntilTime us=6000000\ncpu.status\n:quit\n' | \
   Tools/wsdbg/target/release/wsdbg.exe --sync --compact --quiet \
-    --launch Windows/x64/Debug/PPSSPPHeadless.exe --vsh -i --graphics=vulkan --loglevel=3 2>emu.log
+    --launch Windows/x64/Debug/PPSSPPHeadless.exe --vsh --cpu=interpreter --graphics=vulkan --loglevel=3 2>emu.log
 ```
 
 That takes a few seconds. Protocol replies come back on stdout, the emulator's log on stderr.
@@ -23,7 +23,7 @@ Put more commands in the script to inspect state once it stops. Three things to 
 1. **Don't add `:wait cpu.stepping` after `cpu.runUntilTime`** (or any resume/step command).
    `--sync` already waits for it; a second one never arrives and burns the whole timeout. This is
    the single most likely reason a run seems to take minutes - emulation itself is ~real time.
-2. **`-i` (interpreter)** is what this path is known to work with, and breakpoints are most
+2. **`--cpu=interpreter`** is what this path is known to work with, and breakpoints are most
    reliable there.
 3. Boot needs a real firmware dump in `assets/flash0/` (and optionally `assets/flash1/`), neither
    of which is in the repo.
@@ -35,17 +35,77 @@ code is not correct." Cancel it with circle and the menu is there and usable.
 
 Two separate things:
 
-- **It thinks a disc is inserted**, because nothing in PPSSPP models an empty drive.
-  `sceUmd.cpp` reports `PSP_UMD_PRESENT | PSP_UMD_READY` unconditionally, and `sceIoDevctl`
-  `0x01F20001` (get disc type) always answers `0x10`, "game disc". JPCSP answers `0` when no ISO is
-  loaded, which is why it never asks the next question. Fixing this properly means giving those two
-  a notion of "no disc" - low risk for games, which always have one, but it is on a path every game
-  uses.
+- **It thought a disc was inserted**, because nothing in PPSSPP modelled an empty drive. Now a shell
+  booted without a game starts with an empty drive: `sceUmdActivate` tells the shell's drive callback
+  (`SceVshMediaDetectUMD`) there's no disc, and `sceIoDevctl` `0x01F20001` (get disc type) answers `0`,
+  as JPCSP does. Activation used to report a readable disc regardless, so the shell asked for its type,
+  got nothing it knew, and showed "The disc could not be read."
+
+  A disc goes in with the WebSocket debugger's `game.umd.insert` (`path`), which mounts the image
+  and calls the drive callback the way a PSP does when a disc is inserted, and comes out with
+  `game.umd.eject`. The shell then lists the disc in the Game column with its icon, background and
+  animated preview, and launching it boots the game through `sceKernelLoadExecVSHDisc` (Daxter on
+  6.61, to its title menu). In the app, the pause screen offers "Insert UMD" and "Eject UMD" while
+  the XMB is running.
+
+  A disc game, or an EBOOT on the memory stick, that the XMB starts doesn't run inside the XMB's
+  session: `sceKernelLoadExec` asks the frontend to boot it (`PSP_RequestBoot`) and stops, and it
+  boots like a game picked from the game list, with its `PARAM.SFO`, compat flags, game config and
+  window title. Its `CoreParameter::launchedFromVSH` keeps the XMB's launch args, so exiting boots
+  the XMB again with whatever disc is in the drive, and the XMB comes back where it was without
+  auto-starting the disc. A disc whose executables are all zeroes (the EUR Video Demo Disc's
+  "game") still loads in place and fails back to the XMB. Under the debugger, the new boot starts
+  stopped, like the first one.
+
+  UMD Video discs work too: the disc type comes from what's on the disc (`PSP_GAME`, `UMD_VIDEO`,
+  `UMD_AUDIO`), the shell lists a video disc in the Video column, and selecting it hands it to the
+  firmware's own player (`video_plugin`, `video_main_plugin`, with `mpeg_vsh.prx`). Bourne Supremacy
+  and the Spider-Man 2 trailer on the EUR Video Demo Disc play with sound. What that player needed
+  from our Media Engine HLE (per-picture SEI records, keyframe flags, field conversion in
+  `sceMpegBaseCscAvc`) is in pspautotests `video/mpeg/avcdetail` and `video/mpeg/cscavc`.
+  Interlaced discs (Family Guy and The Dark Knight are coded as separate field pictures, bottom
+  field first) are shown a field per vsync. The player takes the field order from the two SEI
+  records of each picture, one per field, so a field pair has to come with both (see
+  `PublishPictureInfo()`).
+
+  Booting a UMD Video disc (from the game list, the command line or anywhere else) boots the XMB
+  with the disc in the drive and UMD auto-start forced on (`CoreParameter::umdAutoboot`), so it
+  goes straight to the disc's menu. The swap happens in `PSP_InitStart`'s loader thread. That
+  needs firmware 2.71 or later: 1.50, 2.00 and 2.60 crash in `video_plugin`/paf as soon as the disc
+  is in, and 2.50 refuses it, claiming the system software is version "." (all measured with
+  Bourne Supremacy). A disc with both a game and video asks which one; for video the XMB comes up
+  without auto-start, since auto-start runs the game. The disc type comes from the fourth field of
+  `UMD_DATA.BIN` (`G`, `V`, `A`), and `PSP_GAME` without `SYSDIR/EBOOT.BIN` doesn't count: some video
+  discs (Spider-Man) carry a `PSP_GAME` holding only a firmware update, and reporting those as game
+  discs made the XMB say "The disc could not be read."
 - **It then asked whether the region matched and we didn't answer.** `sceIoDevctl` `0x01E18030` is
   the region check, and unusually it answers through the *return value* (1 matches, 0 doesn't)
   rather than an output buffer. It was unimplemented, so the VSH read the failure as a mismatch and
   retried 12 times. Implemented now - PPSSPP has no region-locked discs, so anything it can load is
   something it should run - and the call drops to one.
+
+## Around the XMB (6.61)
+
+- **Game**: the memory stick list shows PSP games, PS1 EBOOTs and homebrew with icons and info.
+  Homebrew and PS1 games launch from it; PSN titles stop at "The copyright protection information
+  is invalid (8010850E)", since there's no licence (`PSP/LICENSE/*.RIF`). A game that exits goes
+  back to the XMB, as on a PSP. The Saved Data Utility lists saves: it needed the raw stick device
+  `msstor0p1:/` (pspautotests `io/msstor/msstor`) and `sceSdGetLastIndex` without a key.
+- **Photo**: folders under `PICTURE/` list with thumbnails, and JPEG and PNG open full screen (R
+  for the next one).
+- **Music**: MP3 plays. SensMe stops at 8002013A.
+- **Video**: the memory stick list is read from `ms0:/VIDEO` and `ms0:/MP_ROOT`, not `PSP/VIDEO`.
+  H.264/AAC MP4 and Motion JPEG AVI (PCM or u-law audio) play. The player boots the ME in mode 3
+  (`sceMeBootStart`), which is what lets AAC Init take the flags it sets; renders Motion JPEG
+  through `sceMpegBaseYCrCbCopyVme`/`sceMpegBaseCscVme`; and plays audio through a vaudio channel
+  that hands each buffer to the ME (`sceVaudio_E8E78DC8`, then `sceVaudio_504E4745` many times a
+  second). Its Motion JPEG thumbnails replace the frame's Huffman tables with the standard ones, so
+  a file encoded with optimised tables (ffmpeg's default) gets a garbled thumbnail.
+- **Settings**: the menus open. System Information shows "-" for the MAC address: wlan.prx reads it
+  from IdStorage key 0x44, and IdStorage is left failing on purpose (see below).
+- **Network**: the browser and the online manuals reach their Network Connection screen once
+  `sceNetApctl_lib` is there, then stop at 8002013A on `sceHttp` functions only the NetFront browser
+  uses (06488A1C, 2C3C82CF, 3A67F306, 739C2D79, 77EE5319, 8046E250, A461A167, B0257723).
 
 ## Current status
 
@@ -350,11 +410,13 @@ boot *worse*, because a correct implementation lets a real flash0 driver finish 
 on into hardware PPSSPP does not emulate. Leaving the import unresolved makes the driver fail early
 and the boot continues. All three are commented in the source at the point where they'd be added:
 
-- **`ThreadManForKernel` mutex/fpl NIDs** (`0xB7D098C6` `sceKernelCreateMutex`, `0xB011B11F`
-  `sceKernelLockMutex`, `0x6B30100F` `sceKernelUnlockMutex`, `0xD979E9BF` `sceKernelAllocateFpl`) -
-  we implement all four for user mode already. Resolve them and the NAND and ID storage drivers
-  init successfully, then `sceIdStorage_Service` polls the NAND controller at `0xbd101300` forever.
-  No module starts.
+- **`ThreadManForKernel` mutex NIDs** (`0xB7D098C6` `sceKernelCreateMutex`, `0xB011B11F`
+  `sceKernelLockMutex`, `0x6B30100F` `sceKernelUnlockMutex`) - we implement all three for user
+  mode already. Resolve them and the NAND and ID storage drivers init successfully, then
+  `sceIdStorage_Service` polls the NAND controller at `0xbd101300` forever (470k reads in 25
+  emulated seconds), and only 4 modules start. `sceKernelAllocateFpl` (`0xD979E9BF`) used to be on
+  this list, but it's the mutexes that do it: with only the FPL resolved, `sceIdStorage_Service`
+  allocates from its pool and the boot still reaches the XMB.
 - **`InterruptManagerForKernel` interrupt registration** (`0x58DD8978`, `0xF987B1F0`, `0x4D6E7305`,
   `0xD774BA45`) - JPCSP can honour these because it emulates the interrupt controller as MMIO. We
   dispatch the few interrupts we emulate ourselves (`__RegisterIntrHandler`), so success is a lie

@@ -1,6 +1,7 @@
 #import "ios/ViewController.h"
 #import "ios/Controls.h"
 #import "ios/IAPManager.h"
+#import "ios/ExternalDisplaySceneDelegate.h"
 #if !PPSSPP_PLATFORM(TVOS)
 #import "ios/CameraHelper.h"
 #import <Photos/Photos.h>
@@ -149,6 +150,8 @@ static void VulkanRenderLoop(GraphicsContext *graphicsContext, CAMetalLayer *met
 #if !PPSSPP_PLATFORM(TVOS)
 @property (strong, nonatomic) NSOperationQueue *accelerometerQueue;
 @property (strong, nonatomic) CMMotionManager *motionManager;
+// The UISceneAccessoryRegistration for an external display, on iOS 27 and later.
+@property (strong, nonatomic) id externalDisplayRegistration;
 #endif
 
 @end
@@ -222,6 +225,15 @@ static int GetPickerRequestId(id picker) {
 
 - (void)shutdown {
 	self.gameController = nil;
+#if !PPSSPP_PLATFORM(TVOS) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270000
+	if (@available(iOS 27.0, *)) {
+		if (self.externalDisplayRegistration) {
+			// After a restart, the new view controller registers again if the backend can use it.
+			[self unregisterSceneAccessory:self.externalDisplayRegistration];
+			self.externalDisplayRegistration = nil;
+		}
+	}
+#endif
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 
 	_dbg_assert_(sharedViewController != nil);
@@ -312,6 +324,21 @@ static int GetPickerRequestId(id picker) {
 	} else {
 		INFO_LOG(Log::G3D, "No accelerometer available, not starting updates.");
 	}
+
+	if (self.motionManager.gyroAvailable) {
+		self.motionManager.gyroUpdateInterval = 1.0 / 60.0;
+		INFO_LOG(Log::G3D, "Starting gyro updates.");
+
+		// Same serial queue as the accelerometer, so the two don't race in the tilt fusion.
+		[self.motionManager startGyroUpdatesToQueue:self.accelerometerQueue
+							withHandler:^(CMGyroData *gyroData, NSError *error) {
+			if (error) {
+				NSLog(@"Gyro error: %@", error);
+				return;
+			}
+			ProcessGyroData(gyroData);
+		}];
+	}
 #endif
 
 	// Spin up the render thread, which in turn starts the emu thread.
@@ -323,10 +350,18 @@ static int GetPickerRequestId(id picker) {
 	[self requestExitVulkanRenderLoop];
 
 #if !PPSSPP_PLATFORM(TVOS)
+	g_touchTracker.CancelAll();
+#endif
+
+#if !PPSSPP_PLATFORM(TVOS)
 	// Stop accelerometer updates
 	if (self.motionManager.accelerometerActive) {
 		INFO_LOG(Log::G3D, "Stopping accelerometer updates");
 		[self.motionManager stopAccelerometerUpdates];
+	}
+	if (self.motionManager.gyroActive) {
+		INFO_LOG(Log::G3D, "Stopping gyro updates");
+		[self.motionManager stopGyroUpdates];
 	}
 #endif
 }
@@ -611,6 +646,18 @@ static int GetPickerRequestId(id picker) {
 
 	[self updateResolutionWithView:self.view];
 
+#if !PPSSPP_PLATFORM(TVOS) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270000
+	// From iOS 27, an external display scene only goes to apps that register for one like this. Earlier
+	// versions go by the Info.plist role instead. Without the scene, iOS mirrors the phone.
+	if (@available(iOS 27.0, *)) {
+		if (g_Config.iGPUBackend == (int)GPUBackend::METAL || g_Config.iGPUBackend == (int)GPUBackend::VULKAN) {
+			UISceneConfiguration *sceneConfiguration = [UISceneConfiguration new];
+			sceneConfiguration.delegateClass = [ExternalDisplaySceneDelegate class];
+			self.externalDisplayRegistration = [self registerSceneAccessory:[UISceneAccessory externalNonInteractiveSceneAccessoryWithConfiguration:sceneConfiguration]];
+		}
+	}
+#endif
+
 	[self setupFirstController];
 
 	INFO_LOG(Log::G3D, "Detected size: %dx%d", g_display.pixel_xres, g_display.pixel_yres);
@@ -635,10 +682,14 @@ extern float g_safeInsetLeft;
 extern float g_safeInsetRight;
 extern float g_safeInsetTop;
 extern float g_safeInsetBottom;
+extern float g_sideInsetsBottom;
 
 - (void)viewSafeAreaInsetsDidChange {
 	[super viewSafeAreaInsetsDidChange];
+	[self updateSafeInsets];
+}
 
+- (void)updateSafeInsets {
 	// Converts points to pixels, the same way updateResolutionWithView does.
 	CGFloat scale = [self displayScaleForView:self.view];
 
@@ -662,6 +713,54 @@ extern float g_safeInsetBottom;
 		g_safeInsetTop = self.view.safeAreaInsets.top * scale;
 		g_safeInsetBottom = self.view.safeAreaInsets.bottom * scale;
 	}
+
+#if !PPSSPP_PLATFORM(TVOS)
+	// Screens bigger than an iPhone's (an iPad, the iPhone Duo's inner screen) report no side insets in
+	// landscape despite big rounded corners, so keep the content out of them. A fixed physical size, so
+	// UI scaling doesn't change it.
+	CGSize size = self.view.bounds.size;
+	if (size.width > size.height && size.height > 600.0) {
+		const float cornerInset = 38.0f * scale;
+		g_safeInsetLeft = std::max(g_safeInsetLeft, cornerInset);
+		g_safeInsetRight = std::max(g_safeInsetRight, cornerInset);
+	}
+#endif
+
+	const CGFloat sideInsetsBottom = [self sideInsetsBottom];
+	g_sideInsetsBottom = sideInsetsBottom < 0.0 ? -1.0f : sideInsetsBottom * scale;
+}
+
+// How far down the screen the side insets are needed, in points, or -1 if all the way. Side insets
+// come from occlusions like the camera, and on the iPhone Duo's cover screen that's a box in the top
+// right corner, which the touch controls don't need to avoid.
+- (CGFloat)sideInsetsBottom {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+	if (@available(iOS 27.1, *)) {
+		UIEdgeInsets safe = self.view.safeAreaInsets;
+		if (safe.left <= 0.0 && safe.right <= 0.0) {
+			return -1.0;
+		}
+		const CGFloat width = self.view.bounds.size.width;
+		bool leftExplained = safe.left <= 0.0;
+		bool rightExplained = safe.right <= 0.0;
+		CGFloat bottom = 0.0;
+		for (UIViewReservedRegion *region in [self.view reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind]) {
+			const CGRect frame = region.frame;
+			const bool onLeft = safe.left > 0.0 && CGRectGetMinX(frame) < safe.left;
+			const bool onRight = safe.right > 0.0 && CGRectGetMaxX(frame) > width - safe.right;
+			if (onLeft || onRight) {
+				leftExplained |= onLeft;
+				rightExplained |= onRight;
+				bottom = std::max(bottom, CGRectGetMaxY(frame));
+			}
+		}
+		// An inset with no occlusion behind it (like the home indicator's) could be anywhere.
+		if (leftExplained && rightExplained) {
+			return bottom;
+		}
+	}
+#endif
+	return -1.0;
 }
 
 - (void)shareText:(NSString *)text {
@@ -799,6 +898,9 @@ static NSSet<UIPress *> *NonKeyboardPresses(NSSet<UIPress *> *presses) {
 // backbuffer matching the view while it animates.
 - (void)viewDidLayoutSubviews {
 	[super viewDidLayoutSubviews];
+	// A rotation doesn't always change the system's insets, but it can change ours. And the reserved
+	// regions can show up after the size and insets have settled.
+	[self updateSafeInsets];
 	CGSize size = self.view.bounds.size;
 	if (size.width <= 0.0 || size.height <= 0.0 || CGSizeEqualToSize(size, lastLayoutSize_)) {
 		return;

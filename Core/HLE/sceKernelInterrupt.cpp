@@ -30,6 +30,8 @@
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/ErrorCodes.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/MIPS/MeCore.h"
+#include "Core/HW/MMIO.h"
 
 #include "Core/Debugger/MemBlockInfo.h"
 #include "Core/HLE/sceKernel.h"
@@ -132,6 +134,19 @@ static void sceKernelCpuResumeIntrWithSync(u32 enable)
 
 bool IntrHandler::run(PendingInterrupt& pend)
 {
+	if (pend.subintr == PSP_INTR_SUB_NONE) {
+		if (!baseEnabled_ || baseHandler_ == 0 || baseHandler_ == FIRMWARE_HANDLER) {
+			return false;
+		}
+		// As interruptman calls it (6.61): the interrupt, the arg, the interrupted pc.
+		DEBUG_LOG(Log::CPU, "Entering base interrupt handler %08x", baseHandler_);
+		currentMIPS->pc = baseHandler_;
+		currentMIPS->r[MIPS_REG_A0] = intrNumber;
+		currentMIPS->r[MIPS_REG_A1] = baseArg_;
+		currentMIPS->r[MIPS_REG_A2] = intState.savedCpu.pc;
+		return true;
+	}
+
 	SubIntrHandler *handler = get(pend.subintr);
 	if (!handler) {
 		WARN_LOG(Log::sceIntc, "Ignoring interrupt, already been released.");
@@ -155,7 +170,16 @@ void IntrHandler::copyArgsToCPU(PendingInterrupt& pend)
 
 void IntrHandler::handleResult(PendingInterrupt& pend)
 {
-	//u32 result = currentMIPS->r[MIPS_REG_V0];
+	if (pend.subintr != PSP_INTR_SUB_NONE)
+		return;
+	// From interruptman (6.61): -1 is done, -2 disables the interrupt, and n >= 0 runs the handler's
+	// own sub-interrupt n, which nothing here registers.
+	const int result = (int)currentMIPS->r[MIPS_REG_V0];
+	if (result == -2) {
+		enableBase(false);
+	} else if (result >= 0) {
+		WARN_LOG(Log::sceIntc, "Base handler for interrupt %d asked for sub-interrupt %d", intrNumber, result);
+	}
 }
 
 SubIntrHandler* IntrHandler::add(int subIntrNum)
@@ -191,6 +215,7 @@ SubIntrHandler* IntrHandler::get(int subIntrNum)
 void IntrHandler::clear()
 {
 	subIntrHandlers.clear();
+	setBaseHandler(0, 0);
 }
 
 int IntrHandler::queueUp(int subintr) {
@@ -212,12 +237,23 @@ int IntrHandler::queueUp(int subintr) {
 
 void IntrHandler::DoState(PointerWrap &p)
 {
-	auto s = p.Section("IntrHandler", 1);
+	auto s = p.Section("IntrHandler", 1, 2);
 	if (!s)
 		return;
 
 	Do(p, intrNumber);
 	Do<int, SubIntrHandler>(p, subIntrHandlers);
+	if (s >= 2) {
+		Do(p, baseHandler_);
+		Do(p, baseArg_);
+		Do(p, baseEnabled_);
+	} else {
+		setBaseHandler(0, 0);
+	}
+	if (p.mode == p.MODE_READ && (intrNumber < 0 || intrNumber >= PSP_NUMBER_INTERRUPTS)) {
+		ERROR_LOG(Log::sceIntc, "Savestate failure: invalid interrupt handler %d", intrNumber);
+		p.SetError(p.ERROR_FAILURE);
+	}
 }
 
 void PendingInterrupt::DoState(PointerWrap &p)
@@ -236,6 +272,11 @@ void __InterruptsInit()
 	inInterrupt = false;
 	for (int i = 0; i < (int)ARRAY_SIZE(intrHandlers); ++i)
 		intrHandlers[i] = new IntrHandler(i);
+	if (MeCore::g_meState) {
+		// me_wrapper's, in the firmware.
+		intrHandlers[PSP_MECODEC_INTR]->setBaseHandler(IntrHandler::FIRMWARE_HANDLER, 0);
+		intrHandlers[PSP_MECODEC_INTR]->enableBase(true);
+	}
 	intState.clear();
 	threadBeforeInterrupt = 0;
 }
@@ -439,9 +480,9 @@ int __CancelRaisedInterrupts(PSPInterrupt intno) {
 	return count;
 }
 
-void __KernelReturnFromInterrupt()
+void __KernelReturnFromInterrupt(MIPSState *mips)
 {
-	VERBOSE_LOG(Log::sceIntc, "Left interrupt handler at %08x", currentMIPS->pc);
+	VERBOSE_LOG(Log::sceIntc, "Left interrupt handler at %08x", mips->pc);
 
 	hleSkipDeadbeef();
 
@@ -457,7 +498,7 @@ void __KernelReturnFromInterrupt()
 			moreOfThis = moreOfThis || other.intr == pend.intr;
 		}
 		if (!moreOfThis) {
-			currentMIPS->downcount -= intrHandlers[pend.intr]->exitCycles();
+			mips->downcount -= intrHandlers[pend.intr]->exitCycles();
 		}
 	} else {
 		_assert_msg_(false, "Bad pend.intr: %d", pend.intr);
@@ -693,8 +734,7 @@ struct PspIntrHandlerOptionParam {
 	u32 max_clock_hi;      //+34
 };  //=38
 
-static int QueryIntrHandlerInfo()
-{
+static int QueryIntrHandlerInfo() {
 	ERROR_LOG_REPORT(Log::sceIntc, "QueryIntrHandlerInfo()");
 	return 0;
 }
@@ -772,8 +812,10 @@ const HLEFunction Kernel_Library[] =
 	{0X4AC57943, &WrapI_I<sceKernelRegisterExitCallback>,      "sceKernelRegisterExitCallback",       'i', "i"    },
 };
 
-static u32 sysclib_memcpy(u32 dst, u32 src, u32 size) {	
-	if (Memory::IsValidRange(dst, size) && Memory::IsValidRange(src, size)) {
+static u32 sysclib_memcpy(MIPSState *mips, u32 dst, u32 src, u32 size) {
+	if (MMIO::Copy(mips, dst, src, size)) {
+		// To or from hardware registers.
+	} else if (Memory::IsValidRange(dst, size) && Memory::IsValidRange(src, size)) {
 		memcpy(Memory::GetPointerWriteUnchecked(dst), Memory::GetPointerUnchecked(src), size);
 	}
 	if (MemBlockInfoDetailed(size)) {
@@ -832,6 +874,14 @@ static u32 sysclib_strlen(u32 src) {
 	}
 }
 
+static u32 sysclib_strnlen(u32 src, u32 maxLen) {
+	u32 len = 0;
+	while (len < maxLen && Memory::IsValidAddress(src + len) && Memory::ReadUnchecked_U8(src + len) != 0) {
+		len++;
+	}
+	return hleLogVerbose(Log::sceKernel, len);
+}
+
 static int sysclib_memcmp(u32 dst, u32 src, u32 size) {
 	if (Memory::IsValidRange(dst, size) && Memory::IsValidRange(src, size)) {
 		const int retval = memcmp(Memory::GetCharPointerUnchecked(dst), Memory::GetCharPointerUnchecked(src), size);
@@ -842,9 +892,9 @@ static int sysclib_memcmp(u32 dst, u32 src, u32 size) {
 	}
 }
 
-static int sysclib_sprintf_impl(u32 dst, int limit, u32 fmt, int firstVarArg) {
+static int sysclib_sprintf_impl(MIPSState *mips, u32 dst, int limit, u32 fmt, int firstVarArg) {
 	std::string result;
-	if (!HLEFormatPrintf(fmt, firstVarArg, &result)) {
+	if (!HLEFormatPrintf(mips, fmt, firstVarArg, &result)) {
 		return 0;
 	}
 
@@ -867,15 +917,15 @@ static int sysclib_sprintf_impl(u32 dst, int limit, u32 fmt, int firstVarArg) {
 	return (int)retval;
 }
 
-static int sysclib_sprintf(u32 dst, u32 fmt) {
+static int sysclib_sprintf(MIPSState *mips, u32 dst, u32 fmt) {
 	DEBUG_LOG(Log::sceKernel, "Not fully implemented: sysclib_sprintf(dst=%08x, fmt=%08x)", dst, fmt);
 	// dst is a0 and fmt a1, so the varargs start at a2.
-	return hleLogDebug(Log::sceKernel, sysclib_sprintf_impl(dst, 0, fmt, 2));
+	return hleLogDebug(Log::sceKernel, sysclib_sprintf_impl(mips, dst, 0, fmt, 2));
 }
 
-static int sysclib_snprintf(u32 dst, int size, u32 fmt) {
+static int sysclib_snprintf(MIPSState *mips, u32 dst, int size, u32 fmt) {
 	DEBUG_LOG(Log::sceKernel, "Not fully implemented: sysclib_snprintf(dst=%08x, fmt=%08x)", dst, fmt);
-	return hleLogDebug(Log::sceKernel, sysclib_sprintf_impl(dst, size, fmt, 3));
+	return hleLogDebug(Log::sceKernel, sysclib_sprintf_impl(mips, dst, size, fmt, 3));
 }
 
 static u32 sysclib_memset(u32 destAddr, int data, int size) {
@@ -909,8 +959,10 @@ static int sysclib_strncmp(u32 s1, u32 s2, u32 size) {
 	return hleLogError(Log::sceKernel, 0, "Bad addresses");
 }
 
-static u32 sysclib_memmove(u32 dst, u32 src, u32 size) {
-	if (Memory::IsValidRange(dst, size) && Memory::IsValidRange(src, size)) {
+static u32 sysclib_memmove(MIPSState *mips, u32 dst, u32 src, u32 size) {
+	if (MMIO::Copy(mips, dst, src, size)) {
+		// To or from hardware registers.
+	} else if (Memory::IsValidRange(dst, size) && Memory::IsValidRange(src, size)) {
 		memmove(Memory::GetPointerWriteUnchecked(dst), Memory::GetPointerUnchecked(src), size);
 	}
 	if (MemBlockInfoDetailed(size)) {
@@ -926,7 +978,8 @@ static u32 sysclib_strncpy(u32 dest, u32 src, u32 size) {
 
 	// This is just regular strncpy, but being explicit to avoid warnings/safety fixes on missing null.
 	u32 i = 0;
-	u32 srcSize = Memory::ClampValidSizeAt(src, size);
+	const u32 destSize = Memory::ClampValidSizeAt(dest, size);
+	const u32 srcSize = std::min(Memory::ClampValidSizeAt(src, size), destSize);
 	const u8 *srcp = Memory::GetPointerUnchecked(src);
 	u8 *destp = Memory::GetPointerWriteUnchecked(dest);
 	for (i = 0; i < srcSize; ++i) {
@@ -936,7 +989,6 @@ static u32 sysclib_strncpy(u32 dest, u32 src, u32 size) {
 		*destp++ = c;
 	}
 
-	u32 destSize = Memory::ClampValidSizeAt(dest, size);
 	for (; i < destSize; ++i) {
 		*destp++ = 0;
 	}
@@ -961,7 +1013,10 @@ static u32 sysclib_strchr(u32 src, int c) {
 		return hleLogError(Log::sceKernel, 0, "invalid address");
 	}
 	const std::string str = Memory::GetCharPointer(src);
-	size_t cpos = str.find(str, c);
+	if ((char)c == 0) {
+		return hleLogVerbose(Log::sceKernel, src + (u32)str.size());
+	}
+	size_t cpos = str.find((char)c);
 	if (cpos == std::string::npos) {
 		return hleLogVerbose(Log::sceKernel, 0);
 	}
@@ -973,7 +1028,10 @@ static u32 sysclib_strrchr(u32 src, int c) {
 		return hleLogError(Log::sceKernel, 0, "invalid address");
 	}
 	const std::string str = Memory::GetCharPointer(src);
-	size_t cpos = str.rfind(str, c);
+	if ((char)c == 0) {
+		return hleLogVerbose(Log::sceKernel, src + (u32)str.size());
+	}
+	size_t cpos = str.rfind((char)c);
 	if (cpos == std::string::npos) {
 		return hleLogVerbose(Log::sceKernel, 0);
 	}
@@ -1003,6 +1061,7 @@ const HLEFunction SysclibForKernel[] =
 	{0x4C0E0274, &WrapU_UI<sysclib_strrchr>,                   "strrchr",                             'x', "xx",    HLE_KERNEL_SYSCALL },
 	{0xCE2F7487, &WrapU_U<sysclib_toupper>,                    "toupper",                             'x', "x",     HLE_KERNEL_SYSCALL },
 	{0XC2145E80, &WrapI_UIU<sysclib_snprintf>,                 "snprintf",                            'i', "xx",     HLE_KERNEL_SYSCALL },
+	{0x90C5573D, &WrapU_UU<sysclib_strnlen>,                   "strnlen",                             'x', "xx",     HLE_KERNEL_SYSCALL },
 };
 
 void Register_Kernel_Library()
@@ -1035,6 +1094,46 @@ void Register_InterruptManager()
 }
 
 
+// What these return is from tests/intr/kernel/intrhandler, recorded on a PSP. Interrupts there go up to
+// 67, one more than PSP_NUMBER_INTERRUPTS, which the firmware's drivers use anyway.
+static int sceKernelRegisterIntrHandler(int intrNumber, u32 unknown, u32 handler, u32 handlerArg, u32 opt) {
+	if (intrNumber < 0 || intrNumber >= PSP_NUMBER_INTERRUPTS || handler == 0)
+		return hleLogError(Log::sceIntc, SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+	IntrHandler *intr = intrHandlers[intrNumber];
+	if (intr->hasBaseHandler())
+		return hleLogError(Log::sceIntc, SCE_KERNEL_ERROR_FOUND_HANDLER);
+	intr->setBaseHandler(handler, handlerArg);
+	return hleLogDebug(Log::sceIntc, 0);
+}
+
+static int sceKernelReleaseIntrHandler(int intrNumber) {
+	if (intrNumber < 0 || intrNumber >= PSP_NUMBER_INTERRUPTS)
+		return hleLogError(Log::sceIntc, SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+	IntrHandler *intr = intrHandlers[intrNumber];
+	if (!intr->hasBaseHandler())
+		return hleLogError(Log::sceIntc, SCE_KERNEL_ERROR_NOTFOUND_HANDLER);
+	intr->setBaseHandler(0, 0);
+	return hleLogDebug(Log::sceIntc, 0);
+}
+
+static int SetIntrEnabled(int intrNumber, bool enable) {
+	if (intrNumber < 0 || intrNumber >= PSP_NUMBER_INTERRUPTS)
+		return SCE_KERNEL_ERROR_ILLEGAL_INTRCODE;
+	IntrHandler *intr = intrHandlers[intrNumber];
+	if (!intr->hasBaseHandler())
+		return SCE_KERNEL_ERROR_NOTFOUND_HANDLER;
+	intr->enableBase(enable);
+	return 0;
+}
+
+static int sceKernelEnableIntr(int intrNumber) {
+	return hleLogDebugOrError(Log::sceIntc, SetIntrEnabled(intrNumber, true));
+}
+
+static int sceKernelDisableIntr(int intrNumber) {
+	return hleLogDebugOrError(Log::sceIntc, SetIntrEnabled(intrNumber, false));
+}
+
 static int sceKernelIsIntrContext() {
 	return hleLogDebug(Log::sceKernel, __IsInInterrupt() ? 1 : 0);
 }
@@ -1061,15 +1160,10 @@ const HLEFunction InterruptManagerForKernel[] =
 	{0X05572A5F, &WrapV_V<sceKernelExitGame>,                  "sceKernelExitGame",                   'v', ""    ,HLE_KERNEL_SYSCALL },
 	{0X4AC57943, &WrapI_I<sceKernelRegisterExitCallback>,      "sceKernelRegisterExitCallback",       'i', "i"   ,HLE_KERNEL_SYSCALL },
 	{0XFE28C6D9, &WrapI_V<sceKernelIsIntrContext>,             "sceKernelIsIntrContext",              'i', ""    ,HLE_KERNEL_SYSCALL },
-	// NOT added on purpose, even though JPCSP implements all four: sceKernelRegisterIntrHandler
-	// (0x58DD8978), sceKernelReleaseIntrHandler (0xF987B1F0), sceKernelEnableIntr (0x4D6E7305)
-	// and sceKernelDisableIntr (0xD774BA45). JPCSP can honour them because it emulates the
-	// interrupt controller as MMIO; we dispatch the few interrupts we emulate ourselves (see
-	// __RegisterIntrHandler and its callers in sceGe/sceKernelAlarm/sceKernelVTimer) and have no
-	// way to run a guest handler for one. Stubbing them to return success is therefore a lie the
-	// real flash0 drivers act on - measured while booting the VSH, they make 31 such calls
-	// (interrupts 4, 12, 15-18, 20-24, 31), and the boot then stalls in GE list execution without
-	// ever starting a plugin module, where leaving them unresolved reaches the shell.
+	{0X58DD8978, &WrapI_IUUUU<sceKernelRegisterIntrHandler>,   "sceKernelRegisterIntrHandler",        'i', "ixxxx", HLE_KERNEL_SYSCALL },
+	{0XF987B1F0, &WrapI_I<sceKernelReleaseIntrHandler>,        "sceKernelReleaseIntrHandler",         'i', "i"   ,HLE_KERNEL_SYSCALL },
+	{0X4D6E7305, &WrapI_I<sceKernelEnableIntr>,                "sceKernelEnableIntr",                 'i', "i"   ,HLE_KERNEL_SYSCALL },
+	{0XD774BA45, &WrapI_I<sceKernelDisableIntr>,               "sceKernelDisableIntr",                'i', "i"   ,HLE_KERNEL_SYSCALL },
 };
 
 void Register_InterruptManagerForKernel()

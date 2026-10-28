@@ -20,6 +20,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <cstdlib>
 
 #include "Core/Config.h"
 #include "Common/Data/Format/JSONReader.h"
@@ -339,7 +340,7 @@ static constexpr DriverBlackListEntry g_gpuNameBlacklist[] = {
 #if !defined(_WIN32) && !PPSSPP_VK_STATIC
 static const char * const so_names[] = {
 #if PPSSPP_PLATFORM(IOS)
-	// Only reached by the libretro core, the app links MoltenVK statically.
+	// Only reached by the libretro core and the simulator (which has none). The app links MoltenVK statically.
 	"@executable_path/Frameworks/libMoltenVK.dylib",
 	"MoltenVK",
 #elif PPSSPP_PLATFORM(MAC)
@@ -384,6 +385,8 @@ static VulkanLibraryHandle VulkanLoadLibrary(std::string *errorString) {
 
 			File::CreateDir(tempDir);
 			File::CreateDir(fileRedirectDir);
+
+			// Driver workaround through environment variables must have been applied before this (AdrenoEnvVar).
 
 			lib = adrenotools_open_libvulkan(
 				RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_FILE_REDIRECT | ADRENOTOOLS_DRIVER_CUSTOM,
@@ -443,7 +446,7 @@ void VulkanSetNativeLibDir(std::string_view nativeLibDir) {
 }
 
 bool VulkanMayBeAvailable() {
-#if PPSSPP_PLATFORM(IOS)
+#if PPSSPP_PLATFORM(IOS) && !PPSSPP_PLATFORM(IOS_SIMULATOR)
 	// The deployment target (15.0) is above anything MoltenVK doesn't support.
 	g_vulkanAvailabilityChecked = true;
 	g_vulkanMayBeAvailable = true;
@@ -494,6 +497,7 @@ bool VulkanMayBeAvailable() {
 	std::vector<VkPhysicalDevice> devices;
 	bool anyGood = false;
 	const char *instanceExtensions[10]{};
+	bool portabilityFound = false;
 	VkInstance instance = VK_NULL_HANDLE;
 	VkResult res = VK_SUCCESS;
 	uint32_t physicalDeviceCount = 0;
@@ -544,6 +548,11 @@ bool VulkanMayBeAvailable() {
 			platformSurfaceExtensionFound = true;
 			// Note: Can't stop here - the enumeration order isn't specified anywhere, so VK_KHR_surface
 			// may well come after the platform one, and we need both.
+#if PPSSPP_PLATFORM(MAC)
+		} else if (!strcmp(iter.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+			// See VulkanContext::CreateInstance.
+			portabilityFound = true;
+#endif
 		} else if (!strcmp(iter.extensionName, VK_KHR_SURFACE_EXTENSION_NAME)) {
 			instanceExtensions[ci.enabledExtensionCount++] = VK_KHR_SURFACE_EXTENSION_NAME;
 			surfaceExtensionFound = true;
@@ -576,6 +585,10 @@ bool VulkanMayBeAvailable() {
 	info.pEngineName = "VulkanCheckerEngine";
 	ci.pApplicationInfo = &info;
 	ci.flags = 0;
+	if (portabilityFound) {
+		instanceExtensions[ci.enabledExtensionCount++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+		ci.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+	}
 	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Calling vkCreateInstance");
 	res = localCreateInstance(&ci, nullptr, &instance);
 	if (res != VK_SUCCESS) {
@@ -997,3 +1010,35 @@ const char *VulkanResultToString(VkResult res) {
 		return temp;
 	}
 }
+
+static const AdrenoEnvVarDef adrenoEnvVarDefs[] = {
+	{"enable_tp_ubwc_flag_hint", AdrenoEnvVar::enable_tp_ubwc_flag_hint},
+	{"storage_8bit", AdrenoEnvVar::storage_8bit},
+};
+
+const AdrenoEnvVarDef *GetAdrenoEnvVarDefs(int *count) {
+	*count = ARRAY_SIZE(adrenoEnvVarDefs);
+	return adrenoEnvVarDefs;
+}
+
+void VulkanApplyCustomDriverEnvVars(AdrenoEnvVar envVars) {
+	std::string FD_DEV_FEATURES;
+	for (int i = 0; i < ARRAY_SIZE(adrenoEnvVarDefs); i++) {
+		const char *value = (envVars & adrenoEnvVarDefs[i].var) ? "1" : "0";
+		if (!FD_DEV_FEATURES.empty()) {
+			FD_DEV_FEATURES += ",";
+		}
+		FD_DEV_FEATURES += adrenoEnvVarDefs[i].name;
+		FD_DEV_FEATURES += "=";
+		FD_DEV_FEATURES += value;
+	}
+
+	// Simply set the environment variable, AdrenoTools will pick it up.
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(LINUX)
+	setenv("FD_DEV_FEATURES", FD_DEV_FEATURES.c_str(), 1);  // 1 = overwrite existing value
+#else
+	WARN_LOG(Log::G3D, "VulkanApplyCustomDriverEnvVars: Not supported on this platform. (%s)", FD_DEV_FEATURES.c_str());
+#endif
+}
+
+const AdrenoEnvVarDef *GetAdrenoEnvVarDefs(int *count);

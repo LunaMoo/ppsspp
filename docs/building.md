@@ -77,6 +77,15 @@ bug, since CI runs the equivalent of `UnitTest.exe all` on every commit across m
 platforms without apparent issue. If `all`/`Jit` hangs in your environment, run every other
 test by name instead (skip `Jit`) to still get real coverage.
 
+## FFmpeg
+
+Every build compiles FFmpeg (3.0.2) itself, from the copy vendored into `ext/ffmpeg`. There's no
+configure step: `ext/ffmpeg-build` has a hand-kept `config.h` and `sources.mk`, the one list of
+files that every build system uses. After changing the list, run `ext/ffmpeg-build/update_vcxproj.py`
+to copy it into the VS projects. How it works, how to add a codec and why it's done this way are in
+`ext/ffmpeg/README.md`. CMake still links the system's FFmpeg with `-DUSE_SYSTEM_FFMPEG=ON`, or one
+in `FFMPEG_DIR`.
+
 ## UWP build
 
 UWP has its own solution, `UWP\PPSSPP_UWP.sln`. Build the app with `/t:PPSSPP_UWP` (or a single
@@ -85,6 +94,21 @@ library such as `/t:CoreUWP`), same MSBuild setup as above:
 ```powershell
 & $msbuild "UWP\PPSSPP_UWP.sln" /t:PPSSPP_UWP /p:Configuration=Debug /p:Platform=<platform> /m
 ```
+
+## iOS simulator build
+
+On an Apple Silicon Mac, `./b-ios-simulator.sh` builds the App Store variant for the iOS simulator
+into `build-ios-sim/`, then installs and launches it. `./b-ios-simulator.sh "iPhone Duo"` runs it on a
+simulator of that type (names from `xcrun simctl list devicetypes`), creating and booting one if
+needed. Without a name it uses the booted simulator, or boots the newest iPhone. The script also
+opens the simulator UI, which Xcode 27 calls DeviceHub (it replaced Simulator.app). Set
+`CONFIGURATION=Release` for a release build.
+
+`xcrun simctl io booted screenshot shot.png` saves a screenshot at the device's full resolution,
+as App Store Connect wants it. To work in Xcode instead, `open build-ios-sim/PPSSPP.xcodeproj` and
+pick a simulator as the run destination.
+
+The simulator build renders with Metal only and doesn't link MoltenVK.
 
 ## Android assets
 
@@ -121,7 +145,8 @@ with `-DIOS_PLATFORM=TVOS`, which sets `TVOS`.
   then `xcrun devicectl manage pair --device <identifier>` and enter the code it shows.
 - `./b.sh --tvos --libretro` (and `./b.sh --ios --libretro`) build the libretro cores. tvOS has no
   `sigaltstack`, among other things, so this is the build that catches it.
-- There's no tvOS simulator build: FFmpeg has no tvOS simulator libraries.
+- There's no tvOS simulator build. FFmpeg having no tvOS simulator libraries was what stopped it,
+  which no longer applies now that it's built from source, but nobody has tried since.
 - tvOS apps have no persistent storage except about 500 KB of `NSUserDefaults`. Anything else may be
   purged, so the memory stick is in Caches for now.
 

@@ -85,6 +85,7 @@ class Command(object):
 # These have worked and should keep working always - regression tests.
 # -g flag runs these.
 tests_good = [
+  "cpu/cop0/eret",
   "cpu/cpu_alu/cpu_alu",
   "cpu/cpu_alu/cpu_branch",
   "cpu/cpu_alu/branch_link_ra",
@@ -92,6 +93,7 @@ tests_good = [
   "cpu/cpu_alu/cpu_div",
   "cpu/cpu_alu/shift_encodings",
   "cpu/cpu_alu/allegrex_encodings",
+  "cpu/jump/unaligned",
   "cpu/vfpu/callout",
   "cpu/vfpu/colors",
   "cpu/vfpu/convert",
@@ -171,6 +173,8 @@ tests_good = [
   "audio/blocking/vaudio",
   "audio/sceaudio/reserve",
   "audio/sceaudio/datalen",
+  "audio/sceaudio/input",
+  "audio/sceaudio/routing",
   "audio/output2/changelength",
   "audio/output2/release",
   "audio/output2/reserve",
@@ -321,6 +325,7 @@ tests_good = [
   "hash/sha1ctx",
   "hle/check_not_used_uids",
   "intr/intr",
+  "intr/kernel/intrhandler",
   "intr/mfic",
   "intr/enablesub",
   "intr/registersub",
@@ -342,9 +347,19 @@ tests_good = [
   "malloc/malloc",
   "misc/dcache",
   "misc/deadbeef",
+  "modules/cutrel/cutrel",
+  "modules/cutrel/kernel/cutrel",
+  "modules/idlist/idlist",
   "modules/loadrace/loadrace",
   "modules/startoptions/startoptions",
   "modules/unresolved/unresolved",
+  "net/inet/blocking",
+  "net/inet/addr",
+  "net/inet/options",
+  "net/inet/msg",
+  "net/inet/limits",
+  "net/inet/polledge",
+  "net/inet/reuse",
   "misc/libc",
   "misc/sdkver",
   "misc/testgp",
@@ -371,6 +386,7 @@ tests_good = [
   "sysmem/volatile",
   "threads/alarm/alarm",
   "threads/alarm/cancel/cancel",
+  "threads/alarm/pending/pending",
   "threads/alarm/refer/refer",
   "threads/alarm/set/set",
   "threads/callbacks/afterwait",
@@ -484,6 +500,8 @@ tests_good = [
   "threads/tls/create",
   "threads/tls/partition",
   "threads/tls/kernel/partition",
+  "threads/threads/kernel/priority",
+  "gpu/ge/kernel/edramsize",
   "threads/tls/delete",
   "threads/tls/get",
   "threads/tls/free",
@@ -508,6 +526,7 @@ tests_good = [
   "threads/vtimers/getbase",
   "threads/vtimers/gettime",
   "threads/vtimers/interrupt",
+  "threads/vtimers/pending/pending",
   "threads/vtimers/refer",
   "threads/vtimers/sethandler",
   "threads/vtimers/settime",
@@ -533,6 +552,7 @@ tests_good = [
   "umd/callbacks/umd",
   "umd/wait/wait",
   "umd/register",
+  "video/mpeg/cscvme",
   "video/mpeg/ringbuffer/avail",
   "video/mpeg/ringbuffer/construct",
   "video/mpeg/ringbuffer/destruct",
@@ -624,6 +644,8 @@ tests_next = [
   "gpu/signals/simple",
   "gpu/simple/simple",
   "intr/waits",
+  "me/audiofifo",  # needs the Media Engine on, and Sony's ME firmware installed
+  "me/vram",  # needs the Media Engine on, and Sony's ME firmware installed
   "sysmem/kernel/heapgrow",
   "io/file/file",
   "io/io/io",
@@ -642,6 +664,26 @@ tests_next = [
   #"modules/loadexec/loader",
   "modules/unloadfill/unloadfill",
   "net/http/http",
+  "net/adhoc/adhocctl",
+  "net/adhoc/alerts",
+  "net/adhoc/discover",
+  "net/adhoc/gamemode",
+  "net/adhoc/limits",
+  "net/adhoc/loopback",
+  "net/adhoc/matching",
+  "net/adhoc/pdp",
+  "net/adhoc/poll",
+  "net/adhoc/ptp",
+  "net/adhoc/self",
+  "net/inet/bind",
+  "net/inet/poll",
+  "net/inet/errors",
+  "net/inet/errnothread",
+  "net/inet/states",
+  "net/inet/offline",
+  "net/inet/stats",
+  "net/inet/tcp",
+  "net/inet/udp",
   "net/primary/ether",
   "sysmem/partition",
   # These two mbx tests only appeared to work because they papered over bugs 
@@ -664,9 +706,9 @@ tests_next = [
   #"utility/savedata/saveemptyfilename",
   "utility/savedata/secureversion",
   "utility/savedata/sizes",
-  "video/mp4/avchold",
+  "video/mp4/avchold",  # needs Sony's mp4 and mpeg modules: --disable-hle=0x110, see docs/pspautotests.md
   "video/mpeg/basic",
-  "video/mpeg/decodeend",
+  "video/mpeg/decodeend",  # needs Sony's mpeg module, as avchold
   "video/mpeg/deletetiming",
   "video/pmf/pmf",
   "video/pmf_simple/pmf_simple",
@@ -725,12 +767,9 @@ def init():
 def cpu_backend(args):
   # Which backend headless will end up on, given the args we hand through to it. Headless defaults
   # to the JIT, and a later flag overrides an earlier one, like its own parsing in Core/CmdLine.cpp.
-  short_flags = {'-i': 'interpreter', '-r': 'ir', '-j': 'jit', '-J': 'jit-ir'}
   backend = 'jit'
   for arg in args:
-    if arg in short_flags:
-      backend = short_flags[arg]
-    elif arg.startswith('--cpu='):
+    if arg.startswith('--cpu='):
       backend = arg[len('--cpu='):]
   return backend
 

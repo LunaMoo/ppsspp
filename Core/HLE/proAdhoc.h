@@ -330,6 +330,7 @@ typedef struct AdhocSocket {
 		SceNetAdhocPtpStat ptp;
 	} data;
 	void *postofficeHandle; // aemu_postoffice mode handle
+	bool postofficePdpEnetReliable;
 	std::thread *connectThread;
 	bool connectThreadDone;
 	int connectThreadResult;
@@ -524,7 +525,7 @@ typedef struct SceNetAdhocMatchingContext {
 
 // End of psp definitions
 
-const size_t MAX_ADHOCCTL_HANDLERS = 32; //4
+const size_t MAX_ADHOCCTL_HANDLERS = 4; // pspautotests net/adhoc/adhocctl
 const size_t MAX_MATCHING_HANDLERS = 32; //4
 
 enum {
@@ -768,7 +769,9 @@ extern int actionAfterMatchingMipsCall;
 #define SOCK_PDP	1
 #define SOCK_PTP	2
 // Aux vars
-extern std::atomic<int> metasocket;
+extern void *adhocctlHandle;
+extern int adhocctlId; // for tracking whether there was an instance swap
+extern std::mutex adhocctlMutex;
 extern SceNetAdhocctlParameter parameter;
 extern SceNetAdhocctlAdhocId product_code;
 extern std::thread friendFinderThread;
@@ -784,9 +787,9 @@ extern uint16_t portOffset;
 extern uint32_t minSocketTimeoutUS;
 extern bool isOriPort;
 extern bool isLocalServer;
+extern std::mutex g_adhocServerIPMutex;
 extern SockAddrIN4 g_adhocServerIP; // Resolved Adhoc Server IP so we don't need to repeatedly resolve the DNS again later
 extern SockAddrIN4 g_localhostIP; // Used to differentiate localhost IP on multiple-instance
-extern sockaddr LocalIP; // IP of Network Adapter used to connect to Adhoc Server (LAN/WAN)
 extern int defaultWlanChannel; // Default WLAN Channel for Auto, JPCSP uses 11
 
 extern uint32_t fakePoolSize;
@@ -798,7 +801,7 @@ extern std::atomic<bool> friendFinderRunning;
 extern SceNetAdhocctlPeerInfo * friends;
 extern SceNetAdhocctlScanInfo * networks;
 extern u64 adhocctlStartTime;
-extern bool isAdhocctlNeedLogin;
+extern std::atomic<bool> isAdhocctlNeedLogin;
 extern bool isAdhocctlBusy;
 extern int adhocctlState;
 extern int adhocctlCurrentMode;
@@ -1141,12 +1144,23 @@ void spawnLocalEvent(SceNetAdhocMatchingContext * context, int event, SceNetEthe
  */
 int getActivePeerCount(const bool excludeTimedout = true);
 
+// Call this before getLocalIp() and getHostLocalIp() to adjust to operating system routing table changes
+void clearLocalIpCache();
+
 /**
- * Returns the locall Ip of this machine
+ * Returns the local IP relative to adhoc server ip,
+ * if adhoc server ip is not resolved when called,
+ * falls back to getHostLocalIp.
+ * If adhoc server is on loopback, will return 127.0.0.x multi-instance loopback IP
  * @param SocketAddres OUT: local ip
  */
 int getLocalIp(sockaddr_in * SocketAddress);
-uint32_t getLocalIp(int sock);
+
+/**
+ * Returns the IP that is used to reach default gateway
+ * @param SocketAddres OUT: local ip
+ */
+int getHostLocalIp(sockaddr_in *SocketAddress);
 
 /*
  * Check if an IP (big-endian/network order) is Private or Public IP
@@ -1290,14 +1304,6 @@ int getPDPSocketCount();
 int getPTPSocketCount();
 
 /**
- * Initialize Networking Components for Adhocctl Emulator
- * @param adhoc_id Game Product Code
- * @param server_ip Server IP
- * @return 0 on success or... -1
- */
-int initNetwork(SceNetAdhocctlAdhocId *adhocid);
-
-/**
  * Zero MAC Check
  * @param addr To-be-checked MAC Address
  * @return true if MAC is all zeroes
@@ -1349,3 +1355,9 @@ const char* getMatchingOpcodeStr(int code);
 
 // Convert adhoc ctl state to string
 const char *AdhocCtlStateToString(int state);
+
+// kill adhocctl client after failure so that friend finder thread can reconnect, adhocctlMutex has to be held
+void killAdhocctlClient(bool due_to_error, const std::lock_guard<std::mutex> &lock_proof);
+
+// locks g_adhocServerIPMutex and copys out g_adhocServerIP
+SockAddrIN4 GetAdhocServerIP();

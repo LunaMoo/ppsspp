@@ -236,6 +236,8 @@ public:
 	// The extents will be automatically determined.
 	VkResult InitSurface(WindowSystem winsys, void *data1, void *data2);
 	VkResult ReinitSurface();
+	// Creates a surface for a window, like InitSurface does for the main one. For additional swapchains.
+	VkResult CreateSurface(WindowSystem winsys, void *data1, void *data2, VkSurfaceKHR *surface);
 
 	// If the present mode is not available, will fall back to the first available (which is almost always FIFO).
 	bool InitSwapchain(VkPresentModeKHR desiredPresentMode);
@@ -522,6 +524,7 @@ private:
 	// that we really don't want in everything that uses VulkanContext.
 	void *winsysData1_ = nullptr;
 	void *winsysData2_ = nullptr;
+	// The window's current size in pixels, from the platform. Optional.
 	std::function<VkExtent2D()> cbGetDrawSize_;
 
 	VkInstance instance_ = VK_NULL_HANDLE;

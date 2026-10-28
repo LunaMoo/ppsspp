@@ -17,7 +17,7 @@
 bool InitController(GCController *controller);
 void ShutdownController(GCController *controller);
 
-// Returns false unless the controller is a Siri Remote (a micro gamepad profile and no extended one).
+// Returns false unless the controller is a Siri Remote (a micro gamepad profile, no extended one and no B button).
 bool InitSiriRemote(GCController *controller);
 
 struct TouchTracker {
@@ -26,6 +26,8 @@ public:
 	void Moved(NSSet *touches, UIView *view);
 	void Ended(NSSet *touches, UIView *view);
 	void Cancelled(NSSet *touches, UIView *view);
+	// Lifts every touch still down. UIKit doesn't always end the touches that pull down Control Center.
+	void CancelAll();
 private:
 	void SendTouchEvent(CGPoint point, UIView *view, int code, int pointerId);
 	int ToTouchID(UITouch *uiTouch, bool allowAllocate);
@@ -34,6 +36,7 @@ private:
 
 #if !PPSSPP_PLATFORM(TVOS)
 void ProcessAccelerometerData(CMAccelerometerData *accData);
+void ProcessGyroData(CMGyroData *gyroData);
 #endif
 InputKeyCode HIDUsageToInputKeyCode(UIKeyboardHIDUsage usage);
 

@@ -43,6 +43,8 @@ list(APPEND UISource
 	DisplayLayoutScreen.h
 	EmuScreen.h
 	EmuScreen.cpp
+	ImposeHome.h
+	ImposeHome.cpp
 	GameInfoCache.h
 	GameInfoCache.cpp
 	IAPScreen.cpp
@@ -61,14 +63,27 @@ list(APPEND UISource
 	SimpleDialogScreen.cpp
 	TabbedDialogScreen.h
 	TabbedDialogScreen.cpp
+	SettingsPage.h
+	SettingsPage.cpp
+	Settings/MainSettingsPages.h
+	Settings/GraphicsPage.cpp
+	Settings/ControlsPage.cpp
+	Settings/AudioPage.cpp
+	Settings/NetworkingPage.cpp
+	Settings/GeneralPage.cpp
+	Settings/SystemPage.cpp
+	Settings/ToolsPage.cpp
+	Settings/VRPage.cpp
+	SettingsPagesDialogScreen.h
+	SettingsPagesDialogScreen.cpp
 	GameScreen.h
 	GameScreen.cpp
 	GamePacker.h
 	GamePacker.cpp
 	GameSettingsScreen.h
 	GameSettingsScreen.cpp
-	DeveloperToolsScreen.h
-	DeveloperToolsScreen.cpp
+	DeveloperSettingsPages.h
+	DeveloperSettingsPages.cpp
 	DriverManagerScreen.h
 	DriverManagerScreen.cpp
 	GPUDriverTestScreen.h
