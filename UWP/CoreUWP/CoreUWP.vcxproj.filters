@@ -410,6 +410,8 @@
     <ClCompile Include="..\..\ext\libdeflate\lib\utils.c" />
     <ClCompile Include="..\..\ext\xxhash.c" />
     <ClCompile Include="pch.cpp" />
+    <ClCompile Include="..\..\Core\Util\GIMImage.cpp" />
+    <ClCompile Include="..\..\Core\Util\RCOFile.cpp" />
     <ClCompile Include="..\..\Core\Util\PathUtil.cpp" />
     <ClCompile Include="..\..\Core\SaveStateRewind.cpp" />
     <ClCompile Include="..\..\Core\Util\VideoPlayer.cpp" />
@@ -717,6 +719,8 @@
     <ClInclude Include="..\..\ext\xxhash.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="..\..\Core\Util\GIMImage.h" />
+    <ClInclude Include="..\..\Core\Util\RCOFile.h" />
     <ClInclude Include="..\..\Core\Util\PathUtil.h" />
     <ClInclude Include="..\..\Core\SaveStateRewind.h" />
     <ClInclude Include="..\..\Core\Util\VideoPlayer.h" />

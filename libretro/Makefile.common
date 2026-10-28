@@ -922,7 +922,9 @@ SOURCES_CXX += \
 	       $(COREDIR)/Util/PkgUnpack.cpp \
 	       $(COREDIR)/Util/RecentFiles.cpp \
 	       $(COREDIR)/Util/AudioFormat.cpp \
+	       $(COREDIR)/Util/GIMImage.cpp \
 	       $(COREDIR)/Util/PathUtil.cpp \
+	       $(COREDIR)/Util/RCOFile.cpp \
 	       $(COREDIR)/Util/PortManager.cpp \
 	       $(COREDIR)/Util/GameDB.cpp \
 	       $(CORE_DIR)/UI/GameInfoCache.cpp

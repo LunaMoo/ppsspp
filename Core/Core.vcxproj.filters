@@ -1387,6 +1387,12 @@
     <ClCompile Include="HW\GranularMixer.cpp">
       <Filter>HW</Filter>
     </ClCompile>
+    <ClCompile Include="Util\GIMImage.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="Util\RCOFile.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
     <ClCompile Include="Util\PathUtil.cpp">
       <Filter>Util</Filter>
     </ClCompile>
@@ -2354,6 +2360,12 @@
     </ClInclude>
     <ClInclude Include="HW\GranularMixer.h">
       <Filter>HW</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\GIMImage.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\RCOFile.h">
+      <Filter>Util</Filter>
     </ClInclude>
     <ClInclude Include="Util\PathUtil.h">
       <Filter>Util</Filter>

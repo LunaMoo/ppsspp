@@ -687,6 +687,8 @@ add_library(Core STATIC
 	Util/MemStick.h
 	Util/GameDB.cpp
 	Util/GameDB.h
+	Util/GIMImage.cpp
+	Util/GIMImage.h
 	Util/PathUtil.cpp
 	Util/PathUtil.h
 	Util/PortManager.cpp
@@ -695,6 +697,8 @@ add_library(Core STATIC
 	Util/BlockAllocator.h
 	Util/PPGeDraw.cpp
 	Util/PPGeDraw.h
+	Util/RCOFile.cpp
+	Util/RCOFile.h
 	Util/KL4E.cpp
 	Util/KL4E.h
 	Util/PSARUnpack.cpp
