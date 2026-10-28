@@ -907,7 +907,9 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Util/AudioFormat.cpp \
   $(SRC)/Core/Util/MemStick.cpp \
   $(SRC)/Core/Util/StorageTest.cpp \
+  $(SRC)/Core/Util/GIMImage.cpp \
   $(SRC)/Core/Util/PathUtil.cpp \
+  $(SRC)/Core/Util/RCOFile.cpp \
   $(SRC)/Core/Util/PortManager.cpp \
   $(SRC)/Core/Util/GameDB.cpp \
   $(SRC)/Core/Util/GameManager.cpp \
