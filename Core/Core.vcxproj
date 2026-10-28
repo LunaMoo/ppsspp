@@ -571,6 +571,7 @@
     </ClCompile>
     <ClCompile Include="Dialog\PSPGamedataInstallDialog.cpp" />
     <ClCompile Include="Dialog\PSPDialog.cpp" />
+    <ClCompile Include="Dialog\FirmwareDialogStyle.cpp" />
     <ClCompile Include="Dialog\PSPMsgDialog.cpp" />
     <ClCompile Include="Dialog\PSPNetconfDialog.cpp" />
     <ClCompile Include="Dialog\PSPNpSigninDialog.cpp" />
@@ -746,7 +747,9 @@
     <ClCompile Include="Util\GameDB.cpp" />
     <ClCompile Include="Util\GameManager.cpp" />
     <ClCompile Include="Util\MemStick.cpp" />
+    <ClCompile Include="Util\GIMImage.cpp" />
     <ClCompile Include="Util\PathUtil.cpp" />
+    <ClCompile Include="Util\RCOFile.cpp" />
     <ClCompile Include="Util\PortManager.cpp" />
     <ClCompile Include="Util\PPGeDraw.cpp" />
     <ClCompile Include="Util\KL4E.cpp" />
@@ -1072,6 +1075,7 @@
     <ClInclude Include="Debugger\SymbolMap.h" />
     <ClInclude Include="Dialog\PSPGamedataInstallDialog.h" />
     <ClInclude Include="Dialog\PSPDialog.h" />
+    <ClInclude Include="Dialog\FirmwareDialogStyle.h" />
     <ClInclude Include="Dialog\PSPMsgDialog.h" />
     <ClInclude Include="Dialog\PSPNetconfDialog.h" />
     <ClInclude Include="Dialog\PSPNpSigninDialog.h" />
@@ -1236,7 +1240,9 @@
     <ClInclude Include="Util\GameDB.h" />
     <ClInclude Include="Util\GameManager.h" />
     <ClInclude Include="Util\MemStick.h" />
+    <ClInclude Include="Util\GIMImage.h" />
     <ClInclude Include="Util\PathUtil.h" />
+    <ClInclude Include="Util\RCOFile.h" />
     <ClInclude Include="Util\PortManager.h" />
     <ClInclude Include="Util\PPGeDraw.h" />
     <ClInclude Include="Util\KL4E.h" />

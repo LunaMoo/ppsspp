@@ -59,6 +59,7 @@ private:
 		CLOSED,
 		ASKING,    // Yes / No.
 		QUITTING,  // "Please wait...", while the game's exit callback runs.
+		CLOSING,   // No: the opening animation backwards.
 	};
 
 	void Open();
@@ -66,8 +67,12 @@ private:
 	void Choose(bool quit);
 	void FinishQuit();
 	Action TakeAction();
+	void SetState(State state);
 
 	State state_ = State::CLOSED;
+	// When the screen opened and when it last changed state (time_now_d), for its animations.
+	double openTime_ = 0.0;
+	double stateTime_ = 0.0;
 	bool yes_ = false;  // Which option is highlighted.
 	uint32_t lastButtons_ = 0;
 	// After choosing Yes, while the game's exit callback runs: when to stop waiting and quit anyway.

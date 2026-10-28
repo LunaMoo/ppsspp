@@ -16,6 +16,7 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -99,6 +100,10 @@ public:
 		VOLUME_SET,
 		VOLUME_UNSET,
 		SPEAKER,
+		// The volume bar's sprites with their background cut out, for drawing straight over a game.
+		VOLUME_SET_CLEAR,
+		VOLUME_UNSET_CLEAR,
+		SPEAKER_CLEAR,
 		COUNT,
 	};
 
@@ -114,16 +119,17 @@ public:
 	// when its button is the circle or the cross.
 	Bounds IconBounds(bool circle, const Bounds &screen) const;
 	Bounds LabelBounds(Item label, bool circle, const Bounds &screen) const;
-	void Draw(UIContext &dc, Item item, const Bounds &where);
+	void Draw(UIContext &dc, Item item, const Bounds &where, uint32_t color = 0xFFFFFFFF);
 
 	// The date and time at the top right, as impose.prx draws them, with the battery to their
 	// right (batteryPercent < 0: none, as on a PSP running off the adapter with its battery out). dayFirst is the DD/MM/YYYY date format, twelveHour the 12-hour clock.
-	void DrawStatusBar(UIContext &dc, const Bounds &screen, int month, int day, int hour, int minute, bool dayFirst, bool twelveHour, int batteryPercent);
+	void DrawStatusBar(UIContext &dc, const Bounds &screen, int month, int day, int hour, int minute, bool dayFirst, bool twelveHour, int batteryPercent, uint32_t color);
 	// The lines above and below the question, and the volume bar (volume 0-30) when volume >= 0.
-	void DrawFrame(UIContext &dc, const Bounds &screen, int volume);
+	// spread: how far apart the lines are, from 0 (both in the middle) to 1 (in place).
+	void DrawFrame(UIContext &dc, const Bounds &screen, int volume, float spread, uint32_t color);
 	// Just the volume bar (volume 0-30), which impose also shows over a game when the volume keys
-	// are pressed.
-	void DrawVolumeBar(UIContext &dc, const Bounds &screen, int volume);
+	// are pressed. clear: without the background the firmware's sprites have.
+	void DrawVolumeBar(UIContext &dc, const Bounds &screen, int volume, uint32_t color = 0xFFFFFFFF, bool clear = false);
 	// The same text, for drawing it without the firmware's glyphs: "12/31 9:05" or "31/12 9:05 PM".
 	static std::string ClockText(int month, int day, int hour, int minute, bool dayFirst, bool twelveHour);
 	// Which battery level impose.prx shows for a charge (0 full .. 3 empty).
@@ -177,6 +183,9 @@ constexpr int SPEAKER_SHARED_IMAGE = 18;
 constexpr int SEPARATORS_SHARED_IMAGE = 12;
 constexpr int AMPM_SHARED_IMAGE = 14;
 constexpr int ICON_SIZE = 16;
+// The lines' tops once in place are 96 and 175.
+constexpr float LINES_MIDDLE = 135.5f;
+constexpr float LINES_HALF_GAP = 39.5f;
 
 uint32_t ABGR1555ToRGBA(uint16_t c) {
 	uint32_t r = ((c >> 0) & 31) * 255 / 31;
@@ -368,6 +377,26 @@ bool ImposeArt::Parse(const std::vector<uint8_t> &file, int pspLanguage) {
 		return false;
 	}
 
+	// The volume bar's sprites again, with the color in their corner (their background) made
+	// transparent, and anything darker than it (the shadows) half so.
+	static const Item clearCopies[][2] = {
+		{ Item::VOLUME_SET, Item::VOLUME_SET_CLEAR },
+		{ Item::VOLUME_UNSET, Item::VOLUME_UNSET_CLEAR },
+		{ Item::SPEAKER, Item::SPEAKER_CLEAR },
+	};
+	for (const auto &copy : clearCopies) {
+		Decoded &d = decoded[(int)copy[1]];
+		d = decoded[(int)copy[0]];
+		const uint32_t background = d.pixels[0];
+		for (uint32_t &p : d.pixels) {
+			if (p == background) {
+				p = 0;
+			} else if ((p & 0xFF) < (background & 0xFF)) {
+				p = (p & 0x00FFFFFF) | 0x80000000;
+			}
+		}
+	}
+
 	// Stack them into one texture, a pixel apart so linear filtering doesn't bleed.
 	atlasW_ = 0;
 	atlasH_ = 0;
@@ -428,7 +457,7 @@ Bounds ImposeArt::LabelBounds(Item label, bool circle, const Bounds &screen) con
 	return Bounds(screen.x + x * sx, screen.y + s.y * sy, s.w * sx, s.h * sy);
 }
 
-void ImposeArt::Draw(UIContext &dc, Item item, const Bounds &where) {
+void ImposeArt::Draw(UIContext &dc, Item item, const Bounds &where, uint32_t color) {
 	Draw::Texture *texture = GetTexture(dc.GetDrawContext());
 	if (!texture) {
 		return;
@@ -440,7 +469,7 @@ void ImposeArt::Draw(UIContext &dc, Item item, const Bounds &where) {
 	const float u2 = (float)s.w / atlasW_;
 	const float v1 = (float)s.atlasY / atlasH_;
 	const float v2 = (float)(s.atlasY + s.h) / atlasH_;
-	dc.Draw()->DrawTexRect(where, u1, v1, u2, v2, 0xFFFFFFFF);
+	dc.Draw()->DrawTexRect(where, u1, v1, u2, v2, color);
 	dc.Flush();
 	dc.RebindTexture();
 }
@@ -533,12 +562,12 @@ std::string ImposeArt::ClockText(int month, int day, int hour, int minute, bool 
 	return text;
 }
 
-void ImposeArt::DrawStatusBar(UIContext &dc, const Bounds &screen, int month, int day, int hour, int minute, bool dayFirst, bool twelveHour, int batteryPercent) {
+void ImposeArt::DrawStatusBar(UIContext &dc, const Bounds &screen, int month, int day, int hour, int minute, bool dayFirst, bool twelveHour, int batteryPercent, uint32_t color) {
 	const float sx = screen.w / PSP_W;
 	const float sy = screen.h / PSP_H;
 	auto at = [&](Item item, int x, int y) {
 		const Sprite &s = sprites_[(int)item];
-		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy));
+		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy), color);
 	};
 
 	// Everything is at y 5. The battery sits at x 450, and the clock ends where it starts, or at
@@ -569,48 +598,57 @@ void ImposeArt::DrawStatusBar(UIContext &dc, const Bounds &screen, int month, in
 	}
 }
 
-void ImposeArt::DrawFrame(UIContext &dc, const Bounds &screen, int volume) {
+void ImposeArt::DrawFrame(UIContext &dc, const Bounds &screen, int volume, float spread, uint32_t color) {
 	const float sx = screen.w / PSP_W;
 	const float sy = screen.h / PSP_H;
-	auto at = [&](Item item, int x, int y) {
+	auto at = [&](Item item, float x, float y) {
 		const Sprite &s = sprites_[(int)item];
-		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy));
+		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy), color);
 	};
-	// Where impose.prx leaves them once its opening animation (the lines growing from the
-	// middle) is done.
-	at(Item::LINE, 80, 96);
-	at(Item::LINE, 80, 175);
+	// At 96 and 175 once impose.prx's opening animation is done, moving apart from the middle.
+	const float half = roundf(LINES_HALF_GAP * spread);
+	at(Item::LINE, 80, LINES_MIDDLE - half);
+	at(Item::LINE, 80, LINES_MIDDLE + half);
 	if (volume >= 0) {
-		DrawVolumeBar(dc, screen, volume);
+		DrawVolumeBar(dc, screen, volume, color);
 	}
 }
 
-void ImposeArt::DrawVolumeBar(UIContext &dc, const Bounds &screen, int volume) {
+void ImposeArt::DrawVolumeBar(UIContext &dc, const Bounds &screen, int volume, uint32_t color, bool clear) {
 	const float sx = screen.w / PSP_W;
 	const float sy = screen.h / PSP_H;
 	auto at = [&](Item item, int x, int y) {
 		const Sprite &s = sprites_[(int)item];
-		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy));
+		Draw(dc, item, Bounds(screen.x + x * sx, screen.y + y * sy, s.w * sx, s.h * sy), color);
 	};
-	at(Item::SPEAKER, 28, 223);
+	at(clear ? Item::SPEAKER_CLEAR : Item::SPEAKER, 28, 223);
 	for (int i = 0; i < 30; i++) {
-		at(i < volume ? Item::VOLUME_SET : Item::VOLUME_UNSET, 62 + 12 * i, 223);
+		if (i < volume) {
+			at(clear ? Item::VOLUME_SET_CLEAR : Item::VOLUME_SET, 62 + 12 * i, 223);
+		} else {
+			at(clear ? Item::VOLUME_UNSET_CLEAR : Item::VOLUME_UNSET, 62 + 12 * i, 223);
+		}
 	}
+}
+
+static uint32_t WithAlpha(uint32_t color, float alpha) {
+	const uint32_t a = (uint32_t)(((color >> 24) & 0xFF) * std::clamp(alpha, 0.0f, 1.0f) + 0.5f);
+	return (color & 0x00FFFFFF) | (a << 24);
 }
 
 // The volume bar without the firmware's art: the speaker, then a bar per step set and a dot per
 // step not, where impose puts them.
-static void DrawPlainVolumeBar(UIContext &dc, const Bounds &screen, int volume) {
+static void DrawPlainVolumeBar(UIContext &dc, const Bounds &screen, int volume, float alpha = 1.0f) {
 	const float sx = screen.w / 480.0f;
 	const float sy = screen.h / 272.0f;
 	auto PSPRect = [&](float x, float y, float w, float h) { return Bounds(screen.x + x * sx, screen.y + y * sy, w * sx, h * sy); };
 	const Bounds speaker = PSPRect(28, 223, 32, 28);
-	dc.Draw()->DrawImage(ImageID(volume > 0 ? "I_SPEAKER" : "I_SPEAKER_OFF"), speaker.centerX(), speaker.y + 12.0f * sy, 22.0f * sy / 32.0f, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.Draw()->DrawImage(ImageID(volume > 0 ? "I_SPEAKER" : "I_SPEAKER_OFF"), speaker.centerX(), speaker.y + 12.0f * sy, 22.0f * sy / 32.0f, WithAlpha(0xFFFFFFFF, alpha), ALIGN_CENTER);
 	for (int i = 0; i < 30; i++) {
 		if (i < volume) {
-			dc.FillRect(UI::Drawable(0xFFFFFFFF), PSPRect(64.5f + 12 * i, 228, 3, 14));
+			dc.FillRect(UI::Drawable(WithAlpha(0xFFFFFFFF, alpha)), PSPRect(64.5f + 12 * i, 228, 3, 14));
 		} else {
-			dc.FillRect(UI::Drawable(0xFFC5C5C5), PSPRect(65 + 12 * i, 239, 2, 2));
+			dc.FillRect(UI::Drawable(WithAlpha(0xFFC5C5C5, alpha)), PSPRect(65 + 12 * i, 239, 2, 2));
 		}
 	}
 }
@@ -637,14 +675,50 @@ static uint32_t ConfirmButton() {
 // How long impose shows the volume bar over a game after a volume key.
 static constexpr double VOLUME_BAR_SECONDS = 2.0;
 
+// impose.prx's animations, timed from a video of a PSP (at 30 frames a second). Opening, the
+// screen fades in over the game in OPEN_TIME while the lines move apart from the middle, and the
+// question, Yes / No and the button guide come after, all at once. The highlighted answer blinks,
+// counting from the opening: highlighted for half of BLINK_PERIOD, then plain for most of the rest,
+// with a step of its dimmer look on the way down and back up.
+// Choosing Yes shows "Please wait..." at once and fades the rest out over QUIT_FADE_TIME. Choosing
+// No is assumed to run the opening backwards (the video doesn't show it).
+static constexpr double OPEN_TIME = 1.0 / 6.0;
+static constexpr double QUIT_FADE_TIME = 1.0 / 6.0;
+static constexpr double BLINK_PERIOD = 1.0;
+static constexpr double BLINK_DIM_TIME = 1.0 / 15.0;
+
+enum class Blink {
+	ON,
+	DIM,
+	OFF,
+};
+
+static Blink BlinkAt(double sinceOpen) {
+	const double t = fmod(sinceOpen, BLINK_PERIOD);
+	const double half = BLINK_PERIOD / 2.0;
+	if (t < half) {
+		return Blink::ON;
+	}
+	if (t < half + BLINK_DIM_TIME || t >= BLINK_PERIOD - BLINK_DIM_TIME) {
+		return Blink::DIM;
+	}
+	return Blink::OFF;
+}
+
 // Our game volume (0-100) as the PSP's volume steps (0-30), which the volume bar shows.
 static int VolumeStep() {
 	return (std::clamp(g_Config.iGameVolume, 0, VOLUMEHI_FULL) * 30 + VOLUMEHI_FULL / 2) / VOLUMEHI_FULL;
 }
 
+void ImposeHomeScreen::SetState(State state) {
+	state_ = state;
+	stateTime_ = time_now_d();
+}
+
 void ImposeHomeScreen::Open() {
 	INFO_LOG(Log::System, "HOME: showing the quit screen");
-	state_ = State::ASKING;
+	SetState(State::ASKING);
+	openTime_ = stateTime_;
 	yes_ = false;
 	__CtrlSetGameInputBlocked(true);
 }
@@ -657,6 +731,11 @@ void ImposeHomeScreen::Close() {
 }
 
 void ImposeHomeScreen::Choose(bool quit) {
+	if (!quit && coreState == CORE_RUNNING_CPU) {
+		// The game gets its input back once the screen has gone.
+		SetState(State::CLOSING);
+		return;
+	}
 	if (!quit || coreState != CORE_RUNNING_CPU) {
 		Close();
 		return;
@@ -666,7 +745,7 @@ void ImposeHomeScreen::Choose(bool quit) {
 	//
 	// The game still shouldn't get input meanwhile (TODO: though nothing enforces this?)
 	// and "Please wait..." stays up until it's gone.
-	state_ = State::QUITTING;
+	SetState(State::QUITTING);
 	if (!__KernelIsExitCallbackPending() && __KernelInvokeRegisteredExitCallback(__KernelCanExitToVSH())) {
 		INFO_LOG(Log::System, "HOME: quitting, running the game's exit callback");
 		exitDeadline_ = time_now_d() + 4.0;
@@ -693,7 +772,7 @@ ImposeHomeScreen::Action ImposeHomeScreen::Update(bool running, bool onTop) {
 	if (!running) {
 		// Paused in the debugger, say, or on the way out: keep showing "Please wait..." while a
 		// quit is under way, otherwise let go.
-		if (state_ == State::ASKING || !PSP_IsInited()) {
+		if (state_ == State::ASKING || state_ == State::CLOSING || !PSP_IsInited()) {
 			Close();
 		}
 		lastButtons_ = 0;
@@ -716,6 +795,10 @@ ImposeHomeScreen::Action ImposeHomeScreen::Update(bool running, bool onTop) {
 	const uint32_t pressed = buttons & ~lastButtons_;
 	lastButtons_ = buttons;
 
+	if (state_ == State::CLOSING && time_now_d() - stateTime_ >= OPEN_TIME) {
+		Close();
+	}
+
 	if (!onTop) {
 		// The pause menu or such is up. Leave the quit screen as it was.
 		return Action::NONE;
@@ -737,6 +820,10 @@ ImposeHomeScreen::Action ImposeHomeScreen::Update(bool running, bool onTop) {
 		break;
 	case State::ASKING:
 	{
+		if (time_now_d() - openTime_ < OPEN_TIME) {
+			// Still opening: nothing to choose yet.
+			break;
+		}
 		const uint32_t confirm = ConfirmButton();
 		const uint32_t cancel = confirm == CTRL_CIRCLE ? CTRL_CROSS : CTRL_CIRCLE;
 		if (pressed & (CTRL_LEFT | CTRL_RIGHT)) {
@@ -750,6 +837,7 @@ ImposeHomeScreen::Action ImposeHomeScreen::Update(bool running, bool onTop) {
 		break;
 	}
 	case State::QUITTING:
+	case State::CLOSING:
 		break;
 	}
 	return TakeAction();
@@ -762,7 +850,7 @@ ImposeHomeScreen::Action ImposeHomeScreen::TakeAction() {
 }
 
 bool ImposeHomeScreen::IsVisible() const {
-	return IsOpen() || time_now_d() < volumeBarUntil_;
+	return IsOpen() || (g_Config.iVolumeBarStyle != (int)VolumeBarStyle::OFF && time_now_d() < volumeBarUntil_);
 }
 
 bool ImposeHomeScreen::UseFirmwareArt() {
@@ -779,14 +867,18 @@ void ImposeHomeScreen::Draw(UIContext &dc, const Bounds &screen) {
 	using Item = ImposeArt::Item;
 
 	if (state_ == State::CLOSED) {
-		// Only the volume bar, over the game, on the gray impose draws behind it.
+		// Only the volume bar, over the game, on the gray impose draws behind it (unless that's
+		// turned off).
 		const float sx = screen.w / 480.0f;
 		const float sy = screen.h / 272.0f;
 		dc.Flush();
 		dc.RebindTexture();
-		dc.FillRect(UI::Drawable(ImposeArt::BACKGROUND), Bounds(screen.x + 24 * sx, screen.y + 221 * sy, 400 * sx, 30 * sy));
+		const bool clear = g_Config.iVolumeBarStyle == (int)VolumeBarStyle::NO_BACKGROUND;
+		if (!clear) {
+			dc.FillRect(UI::Drawable(ImposeArt::BACKGROUND), Bounds(screen.x + 24 * sx, screen.y + 221 * sy, 400 * sx, 30 * sy));
+		}
 		if (UseFirmwareArt()) {
-			art_->DrawVolumeBar(dc, screen, VolumeStep());
+			art_->DrawVolumeBar(dc, screen, VolumeStep(), 0xFFFFFFFF, clear);
 		} else {
 			DrawPlainVolumeBar(dc, screen, VolumeStep());
 		}
@@ -799,18 +891,51 @@ void ImposeHomeScreen::Draw(UIContext &dc, const Bounds &screen) {
 	// A rectangle on the PSP screen (480x272).
 	auto PSPRect = [&](float x, float y, float w, float h) { return Bounds(screen.x + x * sx, screen.y + y * sy, w * sx, h * sy); };
 
-	const bool asking = state_ == State::ASKING;
 	const bool circleConfirm = ConfirmButton() == CTRL_CIRCLE;
+
+	// Where the animations are (see OPEN_TIME). background: how opaque the screen is over the
+	// game. spread: how far the lines have moved apart. contents: how opaque the status bar, the
+	// lines and the volume bar are. The question goes with the contents once the opening is done.
+	const double now = time_now_d();
+	const float sinceState = (float)((now - stateTime_) / OPEN_TIME);
+	float background = 1.0f;
+	float spread = 1.0f;
+	float contents = 1.0f;
+	bool question = true;
+	bool pleaseWait = false;
+	switch (state_) {
+	case State::ASKING:
+		background = std::clamp((float)((now - openTime_) / OPEN_TIME), 0.0f, 1.0f);
+		spread = background;
+		contents = background;
+		question = background >= 1.0f;
+		break;
+	case State::CLOSING:
+		background = 1.0f - std::clamp(sinceState, 0.0f, 1.0f);
+		spread = background;
+		contents = background;
+		question = false;
+		break;
+	case State::QUITTING:
+		contents = 1.0f - std::clamp((float)((now - stateTime_) / QUIT_FADE_TIME), 0.0f, 1.0f);
+		question = contents > 0.0f;
+		pleaseWait = true;
+		break;
+	case State::CLOSED:
+		return;
+	}
+	const uint32_t contentColor = WithAlpha(0xFFFFFFFF, contents);
+	const Blink blink = BlinkAt(now - openTime_);
 
 	// impose covers the whole screen with this, which its text bitmaps are drawn on.
 	dc.Flush();
 	dc.RebindTexture();
-	dc.FillRect(UI::Drawable(ImposeArt::BACKGROUND), screen);
+	dc.FillRect(UI::Drawable(WithAlpha(ImposeArt::BACKGROUND, background)), screen);
 
 	// The status bar: the emulated PSP's date and time, and the battery - this device's, since the
 	// PSP's is always full. A device without one (a desktop) shows it full, like what games are told.
-	ScePspDateTime now{};
-	const bool haveTime = __RtcGetCurrentLocalTime(&now);
+	ScePspDateTime nowPSP{};
+	const bool haveTime = __RtcGetCurrentLocalTime(&nowPSP);
 	const bool dayFirst = g_Config.iDateFormat == PSP_SYSTEMPARAM_DATE_FORMAT_DDMMYYYY;
 	const bool twelveHour = g_Config.iTimeFormat == PSP_SYSTEMPARAM_TIME_FORMAT_12HR;
 	int batteryPercent = 100;
@@ -826,22 +951,27 @@ void ImposeHomeScreen::Draw(UIContext &dc, const Bounds &screen) {
 
 	if (UseFirmwareArt()) {
 		ImposeArt &art = *art_;
-		if (haveTime) {
-			art.DrawStatusBar(dc, screen, now.month, now.day, now.hour, now.minute, dayFirst, twelveHour, batteryPercent);
+		if (haveTime && contents > 0.0f) {
+			art.DrawStatusBar(dc, screen, nowPSP.month, nowPSP.day, nowPSP.hour, nowPSP.minute, dayFirst, twelveHour, batteryPercent, contentColor);
 		}
 		yesBounds_ = art.ItemBounds(Item::YES, screen);
 		noBounds_ = art.ItemBounds(Item::NO, screen);
-		art.DrawFrame(dc, screen, asking ? volume : -1);
-		if (asking) {
-			art.Draw(dc, Item::QUESTION, art.ItemBounds(Item::QUESTION, screen));
-			art.Draw(dc, yes_ ? Item::YES_SELECTED : Item::YES, yesBounds_);
-			art.Draw(dc, yes_ ? Item::NO : Item::NO_SELECTED, noBounds_);
+		if (contents > 0.0f) {
+			art.DrawFrame(dc, screen, volume, spread, contentColor);
+		}
+		if (question) {
+			const Item highlighted = blink == Blink::ON ? Item::YES_SELECTED : (blink == Blink::DIM ? Item::YES_DIM : Item::YES);
+			const Item highlightedNo = blink == Blink::ON ? Item::NO_SELECTED : (blink == Blink::DIM ? Item::NO_DIM : Item::NO);
+			art.Draw(dc, Item::QUESTION, art.ItemBounds(Item::QUESTION, screen), contentColor);
+			art.Draw(dc, yes_ ? highlighted : Item::YES, yesBounds_, contentColor);
+			art.Draw(dc, yes_ ? Item::NO : highlightedNo, noBounds_, contentColor);
 			// Cross on the left, circle on the right, the labels by their buttons.
-			art.Draw(dc, Item::CROSS_ICON, art.IconBounds(false, screen));
-			art.Draw(dc, Item::CIRCLE_ICON, art.IconBounds(true, screen));
-			art.Draw(dc, Item::ENTER, art.LabelBounds(Item::ENTER, circleConfirm, screen));
-			art.Draw(dc, Item::BACK, art.LabelBounds(Item::BACK, !circleConfirm, screen));
-		} else {
+			art.Draw(dc, Item::CROSS_ICON, art.IconBounds(false, screen), contentColor);
+			art.Draw(dc, Item::CIRCLE_ICON, art.IconBounds(true, screen), contentColor);
+			art.Draw(dc, Item::ENTER, art.LabelBounds(Item::ENTER, circleConfirm, screen), contentColor);
+			art.Draw(dc, Item::BACK, art.LabelBounds(Item::BACK, !circleConfirm, screen), contentColor);
+		}
+		if (pleaseWait) {
 			art.Draw(dc, Item::PLEASE_WAIT, art.ItemBounds(Item::PLEASE_WAIT, screen));
 		}
 		dc.Flush();
@@ -864,53 +994,60 @@ void ImposeHomeScreen::Draw(UIContext &dc, const Bounds &screen) {
 		const float x = (align & ALIGN_HCENTER) ? bounds.centerX() : bounds.x;
 		dc.DrawText(text, x, bounds.centerY(), color, (align & ALIGN_HCENTER) ? ALIGN_CENTER : (ALIGN_LEFT | ALIGN_VCENTER));
 	};
+	auto faded = [&](uint32_t color) { return WithAlpha(color, contents); };
 
-	// Status bar: the clock right-aligned at the top, the battery as its level in quarters.
-	float clockRight = 480.0f;
-	if (batteryPercent >= 0) {
-		clockRight = 450.0f;
-		const Bounds battery = PSPRect(452, 6, 24, 15);
-		const int level = 3 - ImposeArt::BatteryLevel(batteryPercent);  // Bars, 0-3.
-		dc.FillRect(UI::Drawable(0xFFFFFFFF), Bounds(battery.x, battery.y, battery.w, battery.h));
-		dc.FillRect(UI::Drawable(ImposeArt::BACKGROUND), Bounds(battery.x + sx, battery.y + sy, battery.w - 2 * sx, battery.h - 2 * sy));
-		for (int i = 0; i < level; i++) {
-			dc.FillRect(UI::Drawable(0xFFFFFFFF), PSPRect(455 + 6.5f * i, 9, 5, 9));
+	if (contents > 0.0f) {
+		// Status bar: the clock right-aligned at the top, the battery as its level in quarters.
+		float clockRight = 480.0f;
+		if (batteryPercent >= 0) {
+			clockRight = 450.0f;
+			const Bounds battery = PSPRect(452, 6, 24, 15);
+			const int level = 3 - ImposeArt::BatteryLevel(batteryPercent);  // Bars, 0-3.
+			dc.FillRect(UI::Drawable(faded(0xFFFFFFFF)), Bounds(battery.x, battery.y, battery.w, battery.h));
+			dc.FillRect(UI::Drawable(ImposeArt::BACKGROUND), Bounds(battery.x + sx, battery.y + sy, battery.w - 2 * sx, battery.h - 2 * sy));
+			for (int i = 0; i < level; i++) {
+				dc.FillRect(UI::Drawable(faded(0xFFFFFFFF)), PSPRect(455 + 6.5f * i, 9, 5, 9));
+			}
 		}
-	}
-	if (haveTime) {
-		const std::string clock = ImposeArt::ClockText(now.month, now.day, now.hour, now.minute, dayFirst, twelveHour);
-		float w, h;
-		dc.MeasureText(theme.uiFont, 1.0f, 1.0f, clock, &w, &h);
-		const float scale = h > 0.0f ? 15.0f * sy / h : 1.0f;
-		dc.SetFontScale(scale, scale);
-		dc.DrawText(clock, screen.x + (clockRight - 6.0f) * sx, screen.y + 12.5f * sy, 0xFFFFFFFF, ALIGN_RIGHT | ALIGN_VCENTER);
-	}
+		if (haveTime) {
+			const std::string clock = ImposeArt::ClockText(nowPSP.month, nowPSP.day, nowPSP.hour, nowPSP.minute, dayFirst, twelveHour);
+			float w, h;
+			dc.MeasureText(theme.uiFont, 1.0f, 1.0f, clock, &w, &h);
+			const float scale = h > 0.0f ? 15.0f * sy / h : 1.0f;
+			dc.SetFontScale(scale, scale);
+			dc.DrawText(clock, screen.x + (clockRight - 6.0f) * sx, screen.y + 12.5f * sy, faded(0xFFFFFFFF), ALIGN_RIGHT | ALIGN_VCENTER);
+		}
 
-	// The lines above and below the question.
-	dc.FillRect(UI::Drawable(0xFF9C9C9C), PSPRect(80, 99, 328, 1.5f));
-	dc.FillRect(UI::Drawable(0xFF9C9C9C), PSPRect(80, 178, 328, 1.5f));
+		// The lines above and below the question, moving apart as the screen opens.
+		const float half = roundf(LINES_HALF_GAP * spread);
+		dc.FillRect(UI::Drawable(faded(0xFF9C9C9C)), PSPRect(80, LINES_MIDDLE + 3.0f - half, 328, 1.5f));
+		dc.FillRect(UI::Drawable(faded(0xFF9C9C9C)), PSPRect(80, LINES_MIDDLE + 3.0f + half, 328, 1.5f));
+
+		DrawPlainVolumeBar(dc, screen, volume, contents);
+	}
 
 	yesBounds_ = PSPRect(190, 146, 32, 18);
 	noBounds_ = PSPRect(258, 146, 32, 18);
-	if (asking) {
-		DrawPlainVolumeBar(dc, screen, volume);
-
-		FitText(di->T("Do you want to quit the game?"), PSPRect(40, 112, 400, 19), 0xFFFFFFFF, ALIGN_HCENTER);
+	if (question) {
+		FitText(di->T("Do you want to quit the game?"), PSPRect(40, 112, 400, 19), faded(0xFFFFFFFF), ALIGN_HCENTER);
 		const Bounds &selected = yes_ ? yesBounds_ : noBounds_;
-		dc.FillRect(UI::Drawable(0xFFA4A4A4), selected);
-		FitText(di->T("Yes"), yesBounds_, 0xFFFFFFFF, ALIGN_HCENTER);
-		FitText(di->T("No"), noBounds_, 0xFFFFFFFF, ALIGN_HCENTER);
+		if (blink != Blink::OFF) {
+			dc.FillRect(UI::Drawable(faded(blink == Blink::ON ? 0xFFA4A4A4 : 0xFF6E6E6E)), selected);
+		}
+		FitText(di->T("Yes"), yesBounds_, faded(0xFFFFFFFF), ALIGN_HCENTER);
+		FitText(di->T("No"), noBounds_, faded(0xFFFFFFFF), ALIGN_HCENTER);
 
 		// Button guide, as the firmware has it: cross on the left, circle on the right, each
 		// labelled with what it does.
 		const float iconScale = 16.0f * sy / 32.0f;  // Atlas button icons are about 32 high.
 		const Bounds crossIcon = PSPRect(188, 254, 16, 16);
 		const Bounds circleIcon = PSPRect(266, 254, 16, 16);
-		dc.Draw()->DrawImage(ImageID("I_CROSS"), crossIcon.centerX(), crossIcon.centerY(), iconScale, 0xFFFFFFFF, ALIGN_CENTER);
-		FitText(circleConfirm ? di->T("Back") : di->T("Enter"), PSPRect(204, 254, 60, 14), 0xFFFFFFFF, ALIGN_LEFT);
-		dc.Draw()->DrawImage(ImageID("I_CIRCLE"), circleIcon.centerX(), circleIcon.centerY(), iconScale, 0xFFFFFFFF, ALIGN_CENTER);
-		FitText(circleConfirm ? di->T("Enter") : di->T("Back"), PSPRect(282, 254, 60, 14), 0xFFFFFFFF, ALIGN_LEFT);
-	} else {
+		dc.Draw()->DrawImage(ImageID("I_CROSS"), crossIcon.centerX(), crossIcon.centerY(), iconScale, faded(0xFFFFFFFF), ALIGN_CENTER);
+		FitText(circleConfirm ? di->T("Back") : di->T("Enter"), PSPRect(204, 254, 60, 14), faded(0xFFFFFFFF), ALIGN_LEFT);
+		dc.Draw()->DrawImage(ImageID("I_CIRCLE"), circleIcon.centerX(), circleIcon.centerY(), iconScale, faded(0xFFFFFFFF), ALIGN_CENTER);
+		FitText(circleConfirm ? di->T("Enter") : di->T("Back"), PSPRect(282, 254, 60, 14), faded(0xFFFFFFFF), ALIGN_LEFT);
+	}
+	if (pleaseWait) {
 		FitText(di->T("Please wait..."), PSPRect(120, 128, 240, 16), 0xFFFFFFFF, ALIGN_HCENTER);
 	}
 

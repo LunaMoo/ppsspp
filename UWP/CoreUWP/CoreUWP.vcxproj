@@ -126,6 +126,7 @@
     <ClInclude Include="..\..\Core\Debugger\WebSocket\WebSocketUtils.h" />
     <ClInclude Include="..\..\Core\Dialog\PSPDialog.h" />
     <ClInclude Include="..\..\Core\Dialog\PSPGamedataInstallDialog.h" />
+    <ClInclude Include="..\..\Core\Dialog\FirmwareDialogStyle.h" />
     <ClInclude Include="..\..\Core\Dialog\PSPMsgDialog.h" />
     <ClInclude Include="..\..\Core\Dialog\PSPNetconfDialog.h" />
     <ClInclude Include="..\..\Core\Dialog\PSPNpSigninDialog.h" />
@@ -339,6 +340,8 @@
     <ClInclude Include="..\..\Core\Util\AtracTrack.h" />
     <ClInclude Include="..\..\Core\Util\GameDB.h" />
     <ClInclude Include="..\..\Core\Util\MemStick.h" />
+    <ClInclude Include="..\..\Core\Util\GIMImage.h" />
+    <ClInclude Include="..\..\Core\Util\RCOFile.h" />
     <ClInclude Include="..\..\Core\Util\PathUtil.h" />
     <ClInclude Include="..\..\Core\Util\PortManager.h" />
     <ClInclude Include="..\..\Core\Util\RecentFiles.h" />
@@ -446,6 +449,7 @@
     <ClCompile Include="..\..\Core\Debugger\WebSocket\WebSocketUtils.cpp" />
     <ClCompile Include="..\..\Core\Dialog\PSPDialog.cpp" />
     <ClCompile Include="..\..\Core\Dialog\PSPGamedataInstallDialog.cpp" />
+    <ClCompile Include="..\..\Core\Dialog\FirmwareDialogStyle.cpp" />
     <ClCompile Include="..\..\Core\Dialog\PSPMsgDialog.cpp" />
     <ClCompile Include="..\..\Core\Dialog\PSPNetconfDialog.cpp" />
     <ClCompile Include="..\..\Core\Dialog\PSPNpSigninDialog.cpp" />
@@ -677,6 +681,8 @@
     <ClCompile Include="..\..\Core\Util\AtracTrack.cpp" />
     <ClCompile Include="..\..\Core\Util\GameDB.cpp" />
     <ClCompile Include="..\..\Core\Util\MemStick.cpp" />
+    <ClCompile Include="..\..\Core\Util\GIMImage.cpp" />
+    <ClCompile Include="..\..\Core\Util\RCOFile.cpp" />
     <ClCompile Include="..\..\Core\Util\PathUtil.cpp" />
     <ClCompile Include="..\..\Core\Util\PortManager.cpp" />
     <ClCompile Include="..\..\Core\Util\RecentFiles.cpp" />

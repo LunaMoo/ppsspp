@@ -38,6 +38,10 @@
 #include "GPU/GPUCommon.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/Util/PPGeDraw.h"
+#include "Core/Font/PGF.h"
+#include "Core/Util/GIMImage.h"
+#include "Core/Util/RCOFile.h"
+#include "Common/File/FileUtil.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMemory.h"
@@ -118,6 +122,12 @@ static TextDrawer *textDrawer = nullptr;
 static const FontStyle textDrawerFont(FontFamily::SansSerif, 18, FontStyleFlags::Default);
 struct PPGeTextDrawerCacheKey {
 	bool operator < (const PPGeTextDrawerCacheKey &other) const {
+		if (firmwareFont != other.firmwareFont) {
+			return firmwareFont < other.firmwareFont;
+		}
+		if (lineSpacing != other.lineSpacing) {
+			return lineSpacing < other.lineSpacing;
+		}
 		if (align != other.align)
 			return align < other.align;
 		if (wrapWidth != other.wrapWidth)
@@ -127,14 +137,35 @@ struct PPGeTextDrawerCacheKey {
 	std::string text;
 	int align;
 	float wrapWidth;
+	bool firmwareFont = false;
+	float lineSpacing = 1.0f;
 };
 
 struct PPGeTextDrawerImage {
 	TextStringEntry entry = 0;
 	u32 ptr = 0;
+	// Firmware text: its soft shadow, in the same allocation after the text (so savestates, which
+	// only keep ptr, still free it). At half resolution, its origin FIRMWARE_SHADOW_PAD pixels up
+	// and left of the text's.
+	u32 shadowOffset = 0;
+	int shadowWidth = 0;
+	int shadowHeight = 0;
 };
 
+// Room around firmware text for its blurred shadow (in full-size pixels).
+static const int FIRMWARE_SHADOW_PAD = 12;
+
 static std::map<PPGeTextDrawerCacheKey, PPGeTextDrawerImage> textDrawerImages;
+
+// The firmware's fonts, for dialogs in the PSP firmware's style. Loaded on first use, kept until
+// shutdown. [0] is the Latin font, [1] the Japanese one for characters the first lacks.
+static bool firmwareFontWanted = false;
+static float firmwareLineSpacing = 1.0f;
+static bool firmwareFontsTried = false;
+static PGF *firmwareFonts[2] = {};
+static void PPGeFreeFirmwareFonts();
+static void PPGeForgetFirmwareImages();
+static void PPGeFreeFirmwareImages();
 
 void PPGeSetDrawContext(Draw::DrawContext *draw) {
 	g_draw = draw;
@@ -384,6 +415,10 @@ void __PPGeDoState(PointerWrap &p)
 
 	Do(p, char_lines);
 	Do(p, char_lines_metrics);
+
+	if (p.mode == PointerWrap::MODE_READ) {
+		PPGeForgetFirmwareImages();
+	}
 }
 
 void __PPGeShutdown() {
@@ -412,6 +447,9 @@ void __PPGeShutdown() {
 
 	delete textDrawer;
 	textDrawer = nullptr;
+	PPGeFreeFirmwareFonts();
+	firmwareFontWanted = false;
+	PPGeFreeFirmwareImages();
 
 	for (auto &im : textDrawerImages)
 		kernelMemory.Free(im.second.ptr);
@@ -761,6 +799,378 @@ static AtlasTextMetrics BreakLines(std::string_view text, const AtlasFont &atlas
 	return metrics;
 }
 
+
+static void PPGeLoadFirmwareFonts() {
+	if (firmwareFontsTried) {
+		return;
+	}
+	firmwareFontsTried = true;
+	static const char *const names[2] = { "ltn0.pgf", "jpn0.pgf" };
+	for (int i = 0; i < 2; i++) {
+		std::string data;
+		const Path path = g_Config.nandRootDirectory / "flash0/font" / names[i];
+		if (!File::ReadBinaryFileToString(path, &data)) {
+			continue;
+		}
+		PGF *font = new PGF();
+		if (font->ReadPtr((const u8 *)data.data(), data.size())) {
+			firmwareFonts[i] = font;
+		} else {
+			WARN_LOG(Log::sceGe, "PPGe: can't read firmware font %s", path.c_str());
+			delete font;
+		}
+	}
+	if (!firmwareFonts[0]) {
+		// Japanese alone can do, it has Latin too.
+		firmwareFonts[0] = firmwareFonts[1];
+		firmwareFonts[1] = nullptr;
+	}
+}
+
+static void PPGeFreeFirmwareFonts() {
+	for (PGF *&font : firmwareFonts) {
+		delete font;
+		font = nullptr;
+	}
+	firmwareFontsTried = false;
+}
+
+void PPGeSetFirmwareFont(bool enable, float lineSpacing) {
+	firmwareFontWanted = enable;
+	firmwareLineSpacing = lineSpacing;
+}
+
+bool PPGeHasFirmwareFont() {
+	PPGeLoadFirmwareFonts();
+	return firmwareFonts[0] != nullptr;
+}
+
+static bool FirmwareFontHas(uint32_t c) {
+	for (const PGF *font : firmwareFonts) {
+		PGFCharInfo ci{};
+		if (font && font->GetCharInfo((int)c, &ci, -1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Only for text the fonts can draw all of: Korean and Chinese need fonts other than these two
+// (the PSP's are in other formats), so text in them keeps PPSSPP's font.
+float PPGeFirmwareFontAscent() {
+	if (!PPGeHasFirmwareFont()) {
+		return 0.0f;
+	}
+	PGFFontInfo info{};
+	firmwareFonts[0]->GetFontInfo(&info);
+	return (float)((info.maxGlyphAscenderI + 63) / 64);
+}
+
+float PPGeFirmwareFontLineHeight() {
+	if (!PPGeHasFirmwareFont()) {
+		return 0.0f;
+	}
+	PGFFontInfo info{};
+	firmwareFonts[0]->GetFontInfo(&info);
+	return (info.maxGlyphAscenderI - info.maxGlyphDescenderI) / 64.0f;
+}
+
+static bool UseFirmwareFont(std::string_view text) {
+	if (!firmwareFontWanted || !PPGeHasFirmwareFont()) {
+		return false;
+	}
+	UTF8 utf(text);
+	while (!utf.end()) {
+		uint32_t c = utf.next();
+		if (c == '\n' || c == '\r' || c == '\t') {
+			continue;
+		}
+		if (!FirmwareFontHas(c)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+namespace {
+
+struct FirmwareGlyph {
+	const PGF *font;
+	int code;
+	int advance64;  // 26.6
+	int left;
+	int top;
+};
+
+struct FirmwareLine {
+	std::vector<FirmwareGlyph> glyphs;
+	int width64 = 0;
+};
+
+struct FirmwareTextLayout {
+	std::vector<FirmwareLine> lines;
+	float lineHeight = 0.0f;  // Pixels, can be fractional; each baseline is rounded.
+	int ascender = 0;
+	int width = 0;   // Pixels, of the widest line.
+	int height = 0;
+};
+
+bool FirmwareGlyphFor(uint32_t c, FirmwareGlyph *g) {
+	for (const PGF *font : firmwareFonts) {
+		if (!font) {
+			continue;
+		}
+		PGFCharInfo ci{};
+		if (font->GetCharInfo((int)c, &ci, -1)) {
+			g->font = font;
+			g->code = (int)c;
+			g->advance64 = ci.sfp26AdvanceH;
+			g->left = (int)ci.bitmapLeft;
+			g->top = (int)ci.bitmapTop;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool IsWideChar(uint32_t c) {
+	// CJK and kana can break anywhere.
+	return (c >= 0x2E80 && c < 0xA000) || (c >= 0xAC00 && c < 0xD7A4) || (c >= 0xF900 && c < 0xFB00) || (c >= 0xFF00 && c < 0xFFF0);
+}
+
+// maxWidth in pixels; <= 0 for no limit. wrap: word wrap at maxWidth, else cut with "...".
+FirmwareTextLayout LayoutFirmwareText(std::string_view text, float maxWidth, bool wrap) {
+	FirmwareTextLayout layout;
+	PGFFontInfo info{};
+	firmwareFonts[0]->GetFontInfo(&info);
+	layout.ascender = (info.maxGlyphAscenderI + 63) / 64;
+	layout.lineHeight = std::max(1.0f, (info.maxGlyphAscenderI - info.maxGlyphDescenderI) * firmwareLineSpacing / 64.0f);
+	const int max64 = maxWidth > 0.0f ? (int)(maxWidth * 64.0f) : 0x7FFFFFFF;
+
+	layout.lines.emplace_back();
+	// Where the line could be broken: index of the space glyph, or of a wide char to break before.
+	int breakAt = -1;
+	bool breakDropsGlyph = false;
+	bool truncated = false;
+	// Whether the current line was started by wrapping (rather than by a newline, which keeps the
+	// spaces it starts with).
+	bool wrappedLine = false;
+
+	UTF8 utf(text);
+	while (!utf.end()) {
+		uint32_t c = utf.next();
+		if (c == '\r') {
+			continue;
+		}
+		if (c == '\n') {
+			truncated = false;
+			layout.lines.emplace_back();
+			breakAt = -1;
+			wrappedLine = false;
+			continue;
+		}
+		if (c == '\t') {
+			c = ' ';
+		}
+		FirmwareGlyph g;
+		if (!FirmwareGlyphFor(c, &g)) {
+			if (!FirmwareGlyphFor('?', &g)) {
+				continue;
+			}
+		}
+
+		FirmwareLine *line = &layout.lines.back();
+		if (truncated) {
+			continue;
+		}
+		if (c == ' ' && line->glyphs.empty() && wrappedLine) {
+			// No leading spaces on wrapped lines.
+			continue;
+		}
+
+		if (line->width64 + g.advance64 > max64 && c != ' ') {
+			if (wrap) {
+				FirmwareLine next;
+				if (breakAt > 0) {
+					// The space broken at stays at the end of the line: the firmware counts it in the
+					// line's width when centring the block (a PSP's message dialog shows that).
+					const int from = breakAt + (breakDropsGlyph ? 1 : 0);
+					next.glyphs.assign(line->glyphs.begin() + from, line->glyphs.end());
+					line->glyphs.resize(from);
+				}
+				// Recount both.
+				line->width64 = 0;
+				for (const FirmwareGlyph &lg : line->glyphs) {
+					line->width64 += lg.advance64;
+				}
+				for (const FirmwareGlyph &lg : next.glyphs) {
+					next.width64 += lg.advance64;
+				}
+				layout.lines.push_back(std::move(next));
+				line = &layout.lines.back();
+				breakAt = -1;
+				wrappedLine = true;
+			} else {
+				// Ellipsis: drop glyphs until "..." fits.
+				FirmwareGlyph dot;
+				if (FirmwareGlyphFor('.', &dot)) {
+					while (!line->glyphs.empty() && line->width64 + dot.advance64 * 3 > max64) {
+						line->width64 -= line->glyphs.back().advance64;
+						line->glyphs.pop_back();
+					}
+					for (int i = 0; i < 3; i++) {
+						line->glyphs.push_back(dot);
+						line->width64 += dot.advance64;
+					}
+				}
+				truncated = true;
+				continue;
+			}
+		}
+
+		if (c == ' ') {
+			breakAt = (int)line->glyphs.size();
+			breakDropsGlyph = true;
+		} else if (IsWideChar(c) && !line->glyphs.empty()) {
+			breakAt = (int)line->glyphs.size();
+			breakDropsGlyph = false;
+		}
+		line->glyphs.push_back(g);
+		line->width64 += g.advance64;
+	}
+
+	int widest = 0;
+	for (const FirmwareLine &line : layout.lines) {
+		widest = std::max(widest, line.width64);
+	}
+	layout.width = (widest + 63) / 64 + 1;
+	// The last line only needs the font's own height.
+	const int fontHeight = (info.maxGlyphAscenderI - info.maxGlyphDescenderI + 63) / 64;
+	layout.height = (int)roundf(((int)layout.lines.size() - 1) * layout.lineHeight) + fontHeight;
+	return layout;
+}
+
+}  // namespace
+
+// The shadow paf gives text, fitted to a PSP's screenshot of a message dialog: the text's coverage
+// blurred (a Gaussian of about 2.5 screen pixels at that size, 3.3 at full size), drawn as the
+// style's shadow color and offset. The fonts' own shadow glyphs don't decode as anything usable
+// with our PGF reader, so this builds it from the text. Halved first, the blur is cheap.
+static void PPGeMakeFirmwareTextShadow(const PPGeTextDrawerImage &im, int bufwBytes, int shadowBufwBytes) {
+	const int w = im.shadowWidth, h = im.shadowHeight;
+	const u8 *text = Memory::GetPointerRangeOrException(im.ptr, bufwBytes * im.entry.bmHeight);
+	u8 *out = Memory::GetPointerWriteRangeOrException(im.ptr + im.shadowOffset, shadowBufwBytes * h);
+	if (!text || !out) {
+		return;
+	}
+
+	// Half-size coverage, 0-1, with the pad around it.
+	std::vector<float> cov((size_t)w * h, 0.0f);
+	for (int y = 0; y < im.entry.bmHeight; y++) {
+		const int sy = (y + FIRMWARE_SHADOW_PAD) / 2;
+		for (int x = 0; x < im.entry.bmWidth; x++) {
+			const u8 b = text[y * bufwBytes + x / 2];
+			const int v = (x & 1) ? (b >> 4) : (b & 0xF);
+			if (v) {
+				const int sx = (x + FIRMWARE_SHADOW_PAD) / 2;
+				cov[(size_t)sy * w + sx] += v / (15.0f * 4.0f);
+			}
+		}
+	}
+
+	// Separable Gaussian, sigma 3.3 full-size pixels.
+	const float sigma = 3.3f / 2.0f;
+	const int radius = (int)ceilf(sigma * 3.0f);
+	std::vector<float> kernel(radius * 2 + 1);
+	float sum = 0.0f;
+	for (int i = -radius; i <= radius; i++) {
+		kernel[i + radius] = expf(-(i * i) / (2.0f * sigma * sigma));
+		sum += kernel[i + radius];
+	}
+	for (float &k : kernel) {
+		k /= sum;
+	}
+	std::vector<float> tmp((size_t)w * h, 0.0f);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			float acc = 0.0f;
+			for (int i = -radius; i <= radius; i++) {
+				const int xx = x + i;
+				if (xx >= 0 && xx < w) {
+					acc += cov[(size_t)y * w + xx] * kernel[i + radius];
+				}
+			}
+			tmp[(size_t)y * w + x] = acc;
+		}
+	}
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			float acc = 0.0f;
+			for (int i = -radius; i <= radius; i++) {
+				const int yy = y + i;
+				if (yy >= 0 && yy < h) {
+					acc += tmp[(size_t)yy * w + x] * kernel[i + radius];
+				}
+			}
+			const int v = std::min(15, (int)(acc * 15.0f + 0.5f));
+			u8 &dst = out[y * shadowBufwBytes + x / 2];
+			dst = (x & 1) ? (u8)((dst & 0x0F) | (v << 4)) : (u8)((dst & 0xF0) | v);
+		}
+	}
+}
+
+// Renders into a 4-bit texture laid out like the TextDrawer's.
+static PPGeTextDrawerImage PPGeRenderFirmwareText(std::string_view text, PPGeAlign align, float maxWidth, bool wrap) {
+	PPGeTextDrawerImage im{};
+	FirmwareTextLayout layout = LayoutFirmwareText(text, maxWidth, wrap);
+	im.entry.width = layout.width;
+	im.entry.height = layout.height;
+	im.entry.bmWidth = std::max(1, layout.width);
+	im.entry.bmHeight = std::max(1, layout.height);
+
+	const int bufwBytes = ((im.entry.bmWidth + 31) / 32) * 16;
+	const u32 sz = bufwBytes * (im.entry.bmHeight + 1);
+	// The shadow, blurred, is at half resolution.
+	im.shadowWidth = (im.entry.bmWidth + 2 * FIRMWARE_SHADOW_PAD + 1) / 2;
+	im.shadowHeight = (im.entry.bmHeight + 2 * FIRMWARE_SHADOW_PAD + 1) / 2;
+	const int shadowBufwBytes = ((im.shadowWidth + 31) / 32) * 16;
+	const u32 shadowSize = im.shadowWidth <= 512 ? shadowBufwBytes * (im.shadowHeight + 1) : 0;
+	im.ptr = __PPGeDoAlloc(sz + shadowSize, true, "PPGeText");
+	if (!im.ptr) {
+		return im;
+	}
+	Memory::Memset(im.ptr, 0, sz + shadowSize, "PPGeTextClear");
+	im.shadowOffset = shadowSize ? sz : 0;
+
+	for (size_t i = 0; i < layout.lines.size(); i++) {
+		const FirmwareLine &line = layout.lines[i];
+		int x64 = 0;
+		if (align & PPGeAlign::BOX_HCENTER) {
+			x64 = (layout.width * 64 - line.width64) / 2;
+		} else if (align & PPGeAlign::BOX_RIGHT) {
+			x64 = layout.width * 64 - line.width64;
+		}
+		const int baseline = (int)roundf(i * layout.lineHeight) + layout.ascender;
+		for (const FirmwareGlyph &g : line.glyphs) {
+			GlyphImage image{};
+			image.pixelFormat = PSP_FONT_PIXELFORMAT_4;
+			image.xPos64 = x64 + g.left * 64;
+			image.yPos64 = (baseline - g.top) * 64;
+			image.bufWidth = bufwBytes * 2;
+			image.bufHeight = im.entry.bmHeight;
+			image.bytesPerLine = bufwBytes;
+			image.bufferPtr = im.ptr;
+			g.font->DrawCharacter(&image, -1, -1, -1, -1, g.code, g.code, FONT_PGF_CHARGLYPH);
+			x64 += g.advance64;
+		}
+	}
+
+	if (im.shadowOffset) {
+		PPGeMakeFirmwareTextShadow(im, bufwBytes, shadowBufwBytes);
+	}
+	return im;
+}
+
 static bool HasTextDrawer() {
 	// We create this on first use so it's on the correct thread.
 	if (textDrawerInited) {
@@ -782,6 +1192,18 @@ static std::string PPGeSanitizeText(std::string_view text) {
 
 void PPGeMeasureText(float *w, float *h, std::string_view text, float scale, int WrapType, int wrapWidth) {
 	std::string s = PPGeSanitizeText(text);
+
+	if (UseFirmwareFont(s)) {
+		const bool wrap = (WrapType & PPGE_LINE_WRAP_WORD) != 0;
+		FirmwareTextLayout layout = LayoutFirmwareText(s, wrap && wrapWidth > 0 ? wrapWidth / scale : 0.0f, wrap);
+		if (w) {
+			*w = layout.width * scale;
+		}
+		if (h) {
+			*h = layout.height * scale;
+		}
+		return;
+	}
 
 	if (HasTextDrawer()) {
 		float mw, mh;
@@ -909,13 +1331,22 @@ static PPGeTextDrawerImage PPGeGetTextImage(std::string_view text, const PPGeSty
 		tdalign |= FLAG_WRAP_TEXT;
 	}
 
-	PPGeTextDrawerCacheKey key{ std::string(text), tdalign, maxWidth / style.scale };
+	const bool firmware = UseFirmwareFont(text);
+	if (firmware) {
+		// Lines are aligned inside the image, so the alignment is part of what's cached.
+		tdalign |= ((int)style.align & 0x0F) << 8;
+	}
+	PPGeTextDrawerCacheKey key{ std::string(text), tdalign, maxWidth / style.scale, firmware, firmware ? firmwareLineSpacing : 1.0f };
 	PPGeTextDrawerImage im{};
 
 	auto cacheItem = textDrawerImages.find(key);
 	if (cacheItem != textDrawerImages.end()) {
 		im = cacheItem->second;
 		cacheItem->second.entry.lastUsedFrame = gpuStats.totals.numFlips;
+	} else if (firmware) {
+		im = PPGeRenderFirmwareText(text, style.align, maxWidth / style.scale, wrap);
+		im.entry.lastUsedFrame = gpuStats.totals.numFlips;
+		textDrawerImages[key] = im;
 	} else {
 		std::vector<uint8_t> bitmapData;
 		Bounds b(0, 0, maxWidth, 272.0f);
@@ -987,6 +1418,31 @@ static void PPGeDrawTextImage(const PPGeTextDrawerImage &im, float x, float y, c
 	else if (style.align & PPGeAlign::BOX_BOTTOM)
 		y -= h;
 
+	const bool firmwareShadow = style.hasShadow && im.shadowOffset != 0;
+	if (firmwareShadow) {
+		// The soft shadow, scaled back up and moved down and right.
+		const u32 shadowPtr = im.ptr + im.shadowOffset;
+		const int shadowBufw = ((im.shadowWidth + 31) / 32) * 32;
+		const int swp2 = GetPow2(im.shadowWidth);
+		const int shp2 = GetPow2(im.shadowHeight);
+		WriteCmd(GE_CMD_TEXADDR0, shadowPtr & 0xFFFFF0);
+		WriteCmd(GE_CMD_TEXBUFWIDTH0, shadowBufw | ((shadowPtr & 0xFF000000) >> 8));
+		WriteCmd(GE_CMD_TEXSIZE0, swp2 | (shp2 << 8));
+		WriteCmd(GE_CMD_TEXFLUSH, 0);
+		const float pad = FIRMWARE_SHADOW_PAD * style.scale;
+		const float sx = x - pad + style.shadowOffsetX, sy = y - pad + style.shadowOffsetY;
+		const float sw = im.shadowWidth * 2 * style.scale, sh = im.shadowHeight * 2 * style.scale;
+		BeginVertexData();
+		Vertex(sx, sy, 0, 0, 1 << swp2, 1 << shp2, style.shadowColor);
+		Vertex(sx + sw, sy + sh, (float)im.shadowWidth / (1 << swp2), (float)im.shadowHeight / (1 << shp2), 1 << swp2, 1 << shp2, style.shadowColor);
+		EndVertexDataAndDraw(GE_PRIM_RECTANGLES);
+
+		WriteCmd(GE_CMD_TEXADDR0, im.ptr & 0xFFFFF0);
+		WriteCmd(GE_CMD_TEXBUFWIDTH0, bufw | ((im.ptr & 0xFF000000) >> 8));
+		WriteCmd(GE_CMD_TEXSIZE0, tile1wp2 | (hp2 << 8));
+		WriteCmd(GE_CMD_TEXFLUSH, 0);
+	}
+
 	BeginVertexData();
 	float tile2x = 512 * style.scale;
 	float tile1w = hasTile2 ? 512.0f * style.scale : w;
@@ -994,7 +1450,7 @@ static void PPGeDrawTextImage(const PPGeTextDrawerImage &im, float x, float y, c
 	float tile1u1 = hasTile2 ? 1.0f : (float)im.entry.width / (1 << tile1wp2);
 	float tile2u1 = hasTile2 ? (float)(im.entry.width - 512) / (1 << tile2wp2) : 0.0f;
 	float v1 = (float)im.entry.height / (1 << hp2);
-	if (style.hasShadow) {
+	if (style.hasShadow && !firmwareShadow) {
 		// Draw more shadows for a blurrier shadow.
 		u32 shadowColor = alphaMul(style.shadowColor, 0.35f);
 		for (float dy = 0.0f; dy <= 2.0f; dy += 1.0f) {
@@ -1067,7 +1523,7 @@ void PPGeDrawText(std::string_view text, float x, float y, const PPGeStyle &styl
 		return;
 	}
 
-	if (HasTextDrawer()) {
+	if (UseFirmwareFont(str) || HasTextDrawer()) {
 		PPGeTextDrawerImage im = PPGeGetTextImage(str, style, 480.0f - x, false);
 		if (im.ptr) {
 			PPGeDrawTextImage(im, x, y, style);
@@ -1108,6 +1564,25 @@ static std::string_view CropLinesToCount(std::string_view s, int numLines) {
 	return s.substr(0, len);
 }
 
+std::vector<PPGeTextLine> PPGeWrapFirmwareText(std::string_view text, float scale, float wrapWidth) {
+	std::vector<PPGeTextLine> lines;
+	const std::string s = PPGeSanitizeText(text);
+	if (!UseFirmwareFont(s)) {
+		return lines;
+	}
+	const FirmwareTextLayout layout = LayoutFirmwareText(s, wrapWidth > 0.0f ? wrapWidth / scale : 0.0f, true);
+	for (size_t i = 0; i < layout.lines.size(); i++) {
+		PPGeTextLine line;
+		for (const FirmwareGlyph &g : layout.lines[i].glyphs) {
+			line.text += CodepointToUTF8((uint32_t)g.code);
+		}
+		// Placed as the whole block would place it.
+		line.top = roundf(i * layout.lineHeight) * scale;
+		lines.push_back(std::move(line));
+	}
+	return lines;
+}
+
 void PPGeDrawTextWrapped(std::string_view text, float x, float y, float wrapWidth, float wrapHeight, const PPGeStyle &style) {
 	std::string s = PPGeSanitizeText(text);
 	if (wrapHeight != 0.0f) {
@@ -1117,6 +1592,15 @@ void PPGeDrawTextWrapped(std::string_view text, float x, float y, float wrapWidt
 	int zoom = (PSP_CoreParameter().pixelHeight + 479) / 480;
 	zoom = std::min(zoom, PSP_CoreParameter().renderScaleFactor);
 	float maxScaleDown = zoom == 1 ? 1.3f : 2.0f;
+
+	if (UseFirmwareFont(s)) {
+		// As on a PSP: no scaling down, whatever doesn't fit is the caller's to scroll or clip.
+		PPGeTextDrawerImage im = PPGeGetTextImage(s, style, wrapWidth <= 0 ? 480.0f - x : wrapWidth, true);
+		if (im.ptr) {
+			PPGeDrawTextImage(im, x, y, style);
+			return;
+		}
+	}
 
 	if (HasTextDrawer()) {
 		float actualWidth, actualHeight;
@@ -1348,6 +1832,154 @@ std::vector<PPGeImage *> PPGeImage::loadedTextures_;
 
 constexpr size_t MAX_VALID_IMAGE_SIZE = 16 * 1024 * 1024;
 
+// Firmware images: "fwrco:<rco file>/<image label>", from g_Config.nandRootDirectory.
+static const char *const FIRMWARE_IMAGE_PREFIX = "fwrco:";
+
+namespace {
+
+struct FirmwareImageCache {
+	std::map<std::string, RCOFile> rcos;
+	std::map<std::string, PPGeImage *> images;
+};
+
+FirmwareImageCache firmwareImageCache;
+
+const RCOFile *FirmwareRCO(const std::string &name) {
+	auto it = firmwareImageCache.rcos.find(name);
+	if (it != firmwareImageCache.rcos.end()) {
+		return it->second.IsLoaded() ? &it->second : nullptr;
+	}
+	RCOFile &rco = firmwareImageCache.rcos[name];
+	std::string data;
+	if (File::ReadBinaryFileToString(g_Config.nandRootDirectory / "flash0/vsh/resource" / name, &data)) {
+		rco.Load(std::vector<uint8_t>(data.begin(), data.end()));
+	}
+	return rco.IsLoaded() ? &rco : nullptr;
+}
+
+}  // namespace
+
+// Decodes "<rco>/<label>" to RGBA8888 rows padded to 4 pixels (the GE's 16-byte texture alignment).
+static int LoadFirmwareImage(const std::string &spec, int *width, int *height, int *contentWidth, unsigned char **data) {
+	size_t slash = spec.find('/');
+	if (slash == std::string::npos) {
+		return 0;
+	}
+	const RCOFile *rco = FirmwareRCO(spec.substr(0, slash));
+	if (!rco) {
+		return 0;
+	}
+	std::vector<uint8_t> gim = rco->ImageData(spec.substr(slash + 1));
+	int w = 0, h = 0;
+	std::vector<uint32_t> pixels;
+	if (gim.empty() || !DecodeGIM(gim.data(), gim.size(), &w, &h, &pixels)) {
+		WARN_LOG(Log::sceGe, "PPGe: no firmware image %s", spec.c_str());
+		return 0;
+	}
+	// The firmware's shadow images are opaque greyscale: how dark the shadow is, which paf draws
+	// as black at that strength.
+	const std::string label = spec.substr(slash + 1);
+	if (endsWith(label, "_shadow") || endsWith(label, "_s")) {
+		for (uint32_t &p : pixels) {
+			p = (p & 0xFF) << 24;
+		}
+	}
+	const int paddedW = (w + 3) & ~3;
+	uint32_t *out = (uint32_t *)calloc((size_t)paddedW * h, 4);
+	if (!out) {
+		return 0;
+	}
+	for (int y = 0; y < h; y++) {
+		memcpy(out + (size_t)y * paddedW, pixels.data() + (size_t)y * w, w * 4);
+	}
+	*width = paddedW;
+	*height = h;
+	*contentWidth = w;
+	*data = (unsigned char *)out;
+	return 1;
+}
+
+PPGeImage *PPGeFirmwareImage(std::string_view rco, std::string_view label) {
+	std::string key = std::string(rco) + "/" + std::string(label);
+	auto it = firmwareImageCache.images.find(key);
+	if (it != firmwareImageCache.images.end()) {
+		return it->second;
+	}
+	PPGeImage *image = nullptr;
+	const RCOFile *file = FirmwareRCO(std::string(rco));
+	if (file && file->Find(RCOFile::Table::IMAGE, label) >= 0) {
+		image = new PPGeImage(FIRMWARE_IMAGE_PREFIX + key);
+	}
+	firmwareImageCache.images[key] = image;
+	return image;
+}
+
+void PPGeDrawFirmwareImage(PPGeImage *image, float x, float y, float w, float h, const PPGeImageStyle &style) {
+	if (!image || !dlPtr) {
+		return;
+	}
+	image->SetTexture();
+	if (!image->IsValid() || image->Width() == 0) {
+		return;
+	}
+	if (w <= 0.0f) {
+		w = (float)image->ContentWidth();
+	}
+	if (h <= 0.0f) {
+		h = (float)image->Height();
+	}
+	const float u2 = (float)image->ContentWidth() / (float)image->Width();
+	PPGeDrawImage(x, y, w, h, 0.0f, 0.0f, u2, 1.0f, image->Width(), image->Height(), style);
+	// Text after this expects the atlas's texture state.
+	PPGeSetDefaultTexture();
+}
+
+void PPGeDrawFirmwareImageFrame(PPGeImage *image, float x, float y, float w, float h, float cornerW, float cornerH, const PPGeImageStyle &style) {
+	if (!image || !dlPtr) {
+		return;
+	}
+	image->SetTexture();
+	if (!image->IsValid() || image->Width() == 0) {
+		return;
+	}
+	const float iw = (float)image->ContentWidth(), ih = (float)image->Height();
+	const float tw = (float)image->Width();
+	cornerW = std::min(cornerW, std::min(iw, w) / 2.0f);
+	cornerH = std::min(cornerH, std::min(ih, h) / 2.0f);
+	// Screen and texture positions of the three columns and rows.
+	const float xs[4] = { x, x + cornerW, x + w - cornerW, x + w };
+	const float ys[4] = { y, y + cornerH, y + h - cornerH, y + h };
+	const float us[4] = { 0.0f, cornerW / tw, (iw - cornerW) / tw, iw / tw };
+	const float vs[4] = { 0.0f, cornerH / ih, (ih - cornerH) / ih, 1.0f };
+	for (int row = 0; row < 3; row++) {
+		for (int col = 0; col < 3; col++) {
+			const float qw = xs[col + 1] - xs[col], qh = ys[row + 1] - ys[row];
+			if (qw <= 0.0f || qh <= 0.0f) {
+				continue;
+			}
+			PPGeDrawImage(xs[col], ys[row], qw, qh, us[col], vs[row], us[col + 1], vs[row + 1], image->Width(), image->Height(), style);
+		}
+	}
+	PPGeSetDefaultTexture();
+}
+
+// On a savestate load the textures' memory now belongs to the loaded state: forget it.
+static void PPGeForgetFirmwareImages() {
+	for (auto &it : firmwareImageCache.images) {
+		if (it.second) {
+			it.second->Forget();
+		}
+	}
+}
+
+static void PPGeFreeFirmwareImages() {
+	for (auto &it : firmwareImageCache.images) {
+		delete it.second;
+	}
+	firmwareImageCache.images.clear();
+	firmwareImageCache.rcos.clear();
+}
+
 PPGeImage::PPGeImage(std::string_view pspFilename)
 	: filename_(pspFilename) {
 }
@@ -1373,7 +2005,14 @@ bool PPGeImage::Load() {
 
 	unsigned char *textureData = nullptr;
 	int success;
-	if (filename_.empty()) {
+	contentWidth_ = 0;
+	if (startsWith(filename_, FIRMWARE_IMAGE_PREFIX)) {
+		success = LoadFirmwareImage(filename_.substr(strlen(FIRMWARE_IMAGE_PREFIX)), &width_, &height_, &contentWidth_, &textureData);
+		if (!success) {
+			loadFailed_ = true;
+			return false;
+		}
+	} else if (filename_.empty()) {
 		_dbg_assert_(size_ < MAX_VALID_IMAGE_SIZE);
 		const u8 *srcPtr = Memory::GetPointerRangeOrException(png_, (u32)size_);
 		if (!srcPtr) {
@@ -1448,7 +2087,7 @@ void PPGeImage::Forget() {
 }
 
 void PPGeImage::DoState(PointerWrap &p) {
-	auto s = p.Section("PPGeImage", 1, 2);
+	auto s = p.Section("PPGeImage", 1, 3);
 	if (!s)
 		return;
 
@@ -1463,6 +2102,11 @@ void PPGeImage::DoState(PointerWrap &p) {
 		Do(p, loadFailed_);
 	} else {
 		loadFailed_ = false;
+	}
+	if (s >= 3) {
+		Do(p, contentWidth_);
+	} else {
+		contentWidth_ = 0;
 	}
 }
 

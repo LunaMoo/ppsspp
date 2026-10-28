@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <initializer_list>
 
 #include "Common/CommonTypes.h"
@@ -51,6 +52,16 @@ struct pspUtilityDialogCommon {
 	s32_le soundThread;     /** Sound thread priority */
 	s32_le result;          /** Result */
 	s32_le reserved[4];     /** Set to 0 */
+};
+
+// How far a firmware style message box has got in appearing: its lines fade in while moving
+// apart to their places, then the rest fades in.
+struct FirmwareBoxAnim {
+	float lineAlpha = 1.0f;
+	float lineInset = 0.0f;
+	// How far the lines have moved apart from the box's middle, 0 to 1 (on top of lineInset).
+	float lineSpread = 1.0f;
+	float contentAlpha = 1.0f;
 };
 
 class PSPDialog {
@@ -94,7 +105,8 @@ public:
 	void FinishAutoShutdown();
 	UtilityDialogType DialogType() { return dialogType_; }
 
-	void StartDraw();
+	// dim: darken the game a little behind the dialog (PPSSPP's style; the firmware's doesn't).
+	void StartDraw(bool dim = true);
 	void EndDraw();
 
 	void FinishVolatile();
@@ -112,6 +124,24 @@ protected:
 	bool IsButtonHeld(int checkButton, int &framesHeld, int framesHeldThreshold = 30, int framesHeldRepeatRate = 10);
 	// The caption override is assumed to have a size of 64 bytes.
 	void DisplayButtons(int flags, std::string_view caption = "");
+	// The firmware style's pieces (see FirmwareDialogStyle.h). Text styles in the firmware's fonts at
+	// the firmware's sizes; call PPGeSetFirmwareFont first.
+	PPGeStyle FirmwareTextStyle(PPGeAlign align, float scale);
+	// The firmware's button guide at the bottom (system_plugin_fg.rco's page_btnnavi).
+	void DisplayButtonsFirmware(int flags, std::string_view caption = "");
+	// A string from the firmware's common dialog parts in the dialog's language, or fallback.
+	std::string FirmwareText(const char *label, std::string_view fallback);
+	// The firmware's message box: text centred on centerX, wrapped at wrapWidth, between two lines
+	// boxWidth wide, with Yes/No or OK under it. Text past 8 lines scrolls, if canScroll. Without
+	// interactive, it only draws (for one fading out).
+	void DisplayMessageBoxFirmware(std::string_view text, float centerX, float boxWidth, float wrapWidth, bool hasYesNo, bool hasOK, bool canScroll, bool interactive = true, const FirmwareBoxAnim &anim = FirmwareBoxAnim());
+	// The firmware's highlights pulse: 0 to 1 and back.
+	float FirmwarePulse() const;
+	// The firmware's busy icon at the bottom right, for while it saves or loads.
+	void DisplayBusyFirmware();
+	void UpdateScroll(float visibleHeight, float totalHeight, float step);
+	// The firmware's scroll bar, left of a message box's text.
+	void DisplayScrollBarFirmware(float visibleLines, float totalLines, float scrollPos, float scrollMax);
 	void DisplayMessage2(std::string_view text1, std::string_view text2a = "", std::string_view text2b = "", std::string_view text3a = "", std::string_view text3b = "", bool hasYesNo = false, bool hasOK = false);
 	void ChangeStatus(DialogStatus newStatus, int delayUs);
 	void UpdatePendingStatus();
@@ -127,6 +157,21 @@ protected:
 	virtual bool LocksVolatileMemory() const {
 		return true;
 	}
+
+	// Makes everything drawn while it lives alpha times as opaque, on top of the dialog's fade.
+	class AlphaScope {
+	public:
+		AlphaScope(PSPDialog *dialog, float alpha) : dialog_(dialog), saved_(dialog->fadeValue) {
+			dialog->fadeValue = (u32)(saved_ * std::clamp(alpha, 0.0f, 1.0f) + 0.5f);
+		}
+		~AlphaScope() {
+			dialog_->fadeValue = saved_;
+		}
+
+	private:
+		PSPDialog *dialog_;
+		u32 saved_;
+	};
 
 	static int GetConfirmButton();
 	// What every InitStart checks first in sceUtility_Driver: the address, then the size against
@@ -160,6 +205,8 @@ protected:
 	float scrollPos_ = 0.0f;
 	int framesUpHeld_ = 0;
 	int framesDownHeld_ = 0;
+	// Frames since the dialog started or the focus last moved, for animations (FirmwarePulse).
+	int pulseFrames_ = 0;
 
 private:
 	DialogStatus status = SCE_UTILITY_STATUS_NONE;

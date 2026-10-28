@@ -746,6 +746,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Debugger/WebSocket/WebSocketUtils.cpp \
   $(SRC)/Core/Dialog/PSPDialog.cpp \
   $(SRC)/Core/Dialog/PSPGamedataInstallDialog.cpp \
+  $(SRC)/Core/Dialog/FirmwareDialogStyle.cpp \
   $(SRC)/Core/Dialog/PSPMsgDialog.cpp \
   $(SRC)/Core/Dialog/PSPNetconfDialog.cpp \
   $(SRC)/Core/Dialog/PSPNpSigninDialog.cpp \
@@ -881,7 +882,9 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Util/AtracTrack.cpp \
   $(SRC)/Core/Util/AudioFormat.cpp \
   $(SRC)/Core/Util/MemStick.cpp \
+  $(SRC)/Core/Util/GIMImage.cpp \
   $(SRC)/Core/Util/PathUtil.cpp \
+  $(SRC)/Core/Util/RCOFile.cpp \
   $(SRC)/Core/Util/PortManager.cpp \
   $(SRC)/Core/Util/GameDB.cpp \
   $(SRC)/Core/Util/GameManager.cpp \

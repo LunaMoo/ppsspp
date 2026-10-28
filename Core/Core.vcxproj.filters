@@ -414,6 +414,9 @@
     <ClCompile Include="Dialog\PSPDialog.cpp">
       <Filter>Dialog</Filter>
     </ClCompile>
+    <ClCompile Include="Dialog\FirmwareDialogStyle.cpp">
+      <Filter>Dialog</Filter>
+    </ClCompile>
     <ClCompile Include="Dialog\PSPMsgDialog.cpp">
       <Filter>Dialog</Filter>
     </ClCompile>
@@ -1519,6 +1522,12 @@
     <ClCompile Include="HW\GranularMixer.cpp">
       <Filter>HW</Filter>
     </ClCompile>
+    <ClCompile Include="Util\GIMImage.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="Util\RCOFile.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
     <ClCompile Include="Util\PathUtil.cpp">
       <Filter>Util</Filter>
     </ClCompile>
@@ -1861,6 +1870,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="Dialog\PSPDialog.h">
+      <Filter>Dialog</Filter>
+    </ClInclude>
+    <ClInclude Include="Dialog\FirmwareDialogStyle.h">
       <Filter>Dialog</Filter>
     </ClInclude>
     <ClInclude Include="Dialog\PSPMsgDialog.h">
@@ -2528,6 +2540,12 @@
     </ClInclude>
     <ClInclude Include="HW\GranularMixer.h">
       <Filter>HW</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\GIMImage.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\RCOFile.h">
+      <Filter>Util</Filter>
     </ClInclude>
     <ClInclude Include="Util\PathUtil.h">
       <Filter>Util</Filter>

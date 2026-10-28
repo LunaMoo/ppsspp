@@ -259,10 +259,12 @@ static int DefaultUIScaleFactor() {
 #define SETTING_IDX(a, x, i) ConfigSettingOffset<std::remove_extent_t<decltype(CONFIG_BLOCK_TYPE(a)::x)>>{ (uint32_t)(offsetof(CONFIG_BLOCK_TYPE(a), x) + (i) * sizeof(std::remove_extent_t<decltype(CONFIG_BLOCK_TYPE(a)::x)>)) }
 
 // All relative to g_Config.
+static constexpr const char *dialogStyleNames[] = { "PPSSPP", "PSP firmware" };
 static constexpr const char *autoLoadSaveStateNames[] = { "Off", "Oldest Save", "Newest Save", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5" };
 
 static constexpr const char *uiSoundStyleNames[] = { "PPSSPP", "PSP firmware, ticks only", "PSP firmware, all sounds" };
 static constexpr const char *homeScreenStyleNames[] = { "PPSSPP", "PSP firmware" };
+static constexpr const char *volumeBarStyleNames[] = { "Home screen style", "Transparent background", "Off" };
 
 static constexpr const char *backgroundAnimationNames[] = { "No animation", "Floating symbols", "Recent games", "Waves", "Moving background", "Bouncing icon", "Colored floating symbols" };
 
@@ -370,6 +372,12 @@ static constexpr ConfigSetting generalSettings[] = {
 		.Label(I18NCat::SYSTEM, "UI sounds").Choices(uiSoundStyleNames),
 	ConfigSetting("HomeScreenStyle", SETTING(g_Config, iHomeScreenStyle), (int)HomeScreenStyle::FIRMWARE, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "HOME button screen").Choices(homeScreenStyleNames),
+	ConfigSetting("MsgDialogStyle", SETTING(g_Config, iMsgDialogStyle), (int)DialogStyle::FIRMWARE, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Message dialogs").Choices(dialogStyleNames),
+	ConfigSetting("SaveDialogStyle", SETTING(g_Config, iSaveDialogStyle), (int)DialogStyle::FIRMWARE, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "Save/Load dialogs").Choices(dialogStyleNames),
+	ConfigSetting("VolumeBarStyle", SETTING(g_Config, iVolumeBarStyle), (int)VolumeBarStyle::NO_BACKGROUND, CfgFlag::DEFAULT)
+		.Label(I18NCat::SYSTEM, "In-game volume bar").Choices(volumeBarStyleNames),
 	ConfigSetting("GameBootAnimation", SETTING(g_Config, bGameBootAnimation), false, CfgFlag::DEFAULT)
 		.Label(I18NCat::SYSTEM, "PSP intro outside the XMB"),
 
