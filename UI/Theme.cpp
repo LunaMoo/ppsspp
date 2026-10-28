@@ -39,9 +39,9 @@ struct ThemeInfo {
 	uint32_t uItemStyleFg = 0xFFFFFFFF;
 	uint32_t uItemStyleBg = 0x55000000;
 	uint32_t uItemFocusedStyleFg = 0xFFFFFFFF;
-	uint32_t uItemFocusedStyleBg = 0xFFEDC24C;
+	uint32_t uItemFocusedStyleBg = 0xFFEA486E;
 	uint32_t uItemDownStyleFg = 0xFFFFFFFF;
-	uint32_t uItemDownStyleBg = 0xFFBD9939;
+	uint32_t uItemDownStyleBg = 0xFFE81949;
 	uint32_t uItemDisabledStyleFg = 0x80EEEEEE;
 	uint32_t uItemDisabledStyleBg = 0x55000000;
 
@@ -50,17 +50,17 @@ struct ThemeInfo {
 	uint32_t uInfoStyleFg = 0xFFFFFFFF;
 	uint32_t uInfoStyleBg = 0x00000000;
 	uint32_t uPopupStyleFg = 0xFFFFFFFF;
-	uint32_t uPopupStyleBg = 0xFF5E4D1F;
-	uint32_t uPopupTitleStyleFg = 0xFFFFFFFF;
+	uint32_t uPopupStyleBg = 0xFF303030;
+	uint32_t uPopupTitleStyleFg = 0xFFF27391;
 	uint32_t uPopupTitleStyleBg = 0x00000000;  // default to invisible
 	uint32_t uTooltipStyleFg = 0xFFFFFFFF;
 	uint32_t uTooltipStyleBg = 0xC0303030;
 	uint32_t uCollapsibleHeaderStyleFg = 0xFFFFFFFF;
 	uint32_t uCollapsibleHeaderStyleBg = 0x55000000;
-	uint32_t uBackgroundColor = 0xFF754D24;
+	uint32_t uBackgroundColor = 0xFF88375C;
 	uint32_t uScrollbarColor = 0x80FFFFFF;
 	uint32_t uPopupSliderColor = 0xFFFFFFFF;
-	uint32_t uPopupSliderFocusedColor = 0xFFEDC24C;
+	uint32_t uPopupSliderFocusedColor = 0xFFEA486E;
 
 	bool operator == (const std::string &other) {
 		return name == other;
