@@ -388,6 +388,7 @@ public:
 	bool bUISound;
 	int iUISoundStyle;  // UISoundStyle
 	int iHomeScreenStyle;  // HomeScreenStyle
+	int iMsgDialogStyle;  // DialogStyle
 	int iVolumeBarStyle;  // VolumeBarStyle
 	bool bGameBootAnimation;
 	bool bEnableStateUndo;

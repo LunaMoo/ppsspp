@@ -735,6 +735,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/Debugger/MemBlockInfo.cpp \
 	       $(COREDIR)/Dialog/PSPDialog.cpp \
 	       $(COREDIR)/Dialog/PSPGamedataInstallDialog.cpp \
+	       $(COREDIR)/Dialog/FirmwareDialogStyle.cpp \
 	       $(COREDIR)/Dialog/PSPMsgDialog.cpp \
 	       $(COREDIR)/Dialog/PSPNetconfDialog.cpp \
 	       $(COREDIR)/Dialog/PSPNpSigninDialog.cpp \

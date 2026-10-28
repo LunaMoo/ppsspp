@@ -81,11 +81,25 @@ struct PPGeStyle {
 	uint32_t color = 0xFFFFFFFF;
 	bool hasShadow = false;
 	uint32_t shadowColor = 0x80000000;
+	// For firmware text, which draws its font's own soft shadow: where it goes, from the text.
+	float shadowOffsetX = 0.0f;
+	float shadowOffsetY = 0.0f;
 };
 
 struct PPGeImageStyle {
 	uint32_t color = 0xFFFFFFFF;
 };
+
+// Draws text from then on with the firmware's own fonts (flash0:/font, ltn0.pgf with jpn0.pgf for
+// what it lacks) instead of PPSSPP's, for dialogs drawn in the PSP firmware's style. At scale 1 text
+// comes out at the font's native size. Without the fonts installed nothing changes.
+// lineSpacing multiplies the font's line height for wrapped text.
+void PPGeSetFirmwareFont(bool enable, float lineSpacing = 1.0f);
+bool PPGeHasFirmwareFont();
+// Height above the baseline of the firmware font's tallest glyph, in pixels at scale 1.
+float PPGeFirmwareFontAscent();
+// The firmware font's line height (tallest ascender to lowest descender), in pixels at scale 1.
+float PPGeFirmwareFontLineHeight();
 
 // Get the metrics of the bounding box of the text without changing the buffer or state.
 void PPGeMeasureText(float *w, float *h, std::string_view text, float scale, int WrapType = PPGE_LINE_NONE, int wrapWidth = 0);
@@ -94,6 +108,14 @@ void PPGeMeasureText(float *w, float *h, std::string_view text, float scale, int
 // Clears the text buffer when done.
 void PPGeDrawText(std::string_view text, float x, float y, const PPGeStyle &style);
 void PPGeDrawTextWrapped(std::string_view text, float x, float y, float wrapWidth, float wrapHeight, const PPGeStyle &style);
+
+struct PPGeTextLine {
+	std::string text;
+	float top;  // From the first line's top.
+};
+// The lines PPGeDrawTextWrapped breaks text into in the firmware's font, and where each goes, for
+// drawing them one at a time. Empty when the text wouldn't use the firmware's font.
+std::vector<PPGeTextLine> PPGeWrapFirmwareText(std::string_view text, float scale, float wrapWidth);
 
 // Draws a "4-patch" for button-like things that can be resized.
 void PPGeDraw4Patch(ImageID atlasImage, float x, float y, float w, float h, u32 color = 0xFFFFFFFF);
@@ -134,6 +156,12 @@ public:
 		return width_;
 	}
 
+	// The image's own width, which for firmware images can be less than Width(): their rows are
+	// padded to what the GE can address. Draw with u up to ContentWidth() / Width().
+	int ContentWidth() const {
+		return contentWidth_ ? contentWidth_ : width_;
+	}
+
 	// Where the loaded texture is in kernel memory, or 0.
 	u32 TextureAddress() const {
 		return texture_;
@@ -160,7 +188,18 @@ private:
 
 	int lastFrame_ = 0;
 	bool loadFailed_ = false;
+	int contentWidth_ = 0;
 };
+
+// An image from the installed firmware's flash0:/vsh/resource RCOs (rco is the file name, label
+// the image's name in it), for dialogs in the firmware's style. Owned by PPGe and cached; null if
+// there's no such image. Not part of savestates: they're dropped on load and reloaded when drawn.
+PPGeImage *PPGeFirmwareImage(std::string_view rco, std::string_view label);
+// Draws one at x, y (top left), w x h, or its own size when w/h are 0.
+void PPGeDrawFirmwareImage(PPGeImage *image, float x, float y, float w, float h, const PPGeImageStyle &style);
+// Draws one as a frame stretched to w x h: its corners (cornerW x cornerH) as they are, its edges and
+// middle stretched between them.
+void PPGeDrawFirmwareImageFrame(PPGeImage *image, float x, float y, float w, float h, float cornerW, float cornerH, const PPGeImageStyle &style);
 
 void PPGeDrawRect(float x1, float y1, float x2, float y2, u32 color);
 

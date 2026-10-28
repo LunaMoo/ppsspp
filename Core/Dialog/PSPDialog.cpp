@@ -16,6 +16,7 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
+#include <cmath>
 #include "Common/Data/Text/I18n.h"
 
 #include "Common/Serialize/Serializer.h"
@@ -25,6 +26,7 @@
 #include "Core/Config.h"
 #include "Core/System.h"
 #include "Core/CoreTiming.h"
+#include "Core/Dialog/FirmwareDialogStyle.h"
 #include "Core/Dialog/PSPDialog.h"
 #include "Core/HLE/PopsBoot.h"
 #include "Core/HLE/sceCtrl.h"
@@ -220,15 +222,18 @@ void PSPDialog::ChangeStatusShutdown(int delayUs) {
 		ChangeStatus(SCE_UTILITY_STATUS_NONE, delayUs);
 }
 
-void PSPDialog::StartDraw()
+void PSPDialog::StartDraw(bool dim)
 {
 	PPGeBegin();
-	PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0x20000000));
+	if (dim) {
+		PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0x20000000));
+	}
 }
 
 void PSPDialog::EndDraw()
 {
 	PPGeEnd();
+	PPGeSetFirmwareFont(false);
 }
 
 int PSPDialog::Shutdown(bool force)
@@ -249,6 +254,7 @@ void PSPDialog::StartFade(bool fadeIn_)
 }
 
 void PSPDialog::UpdateFade(int animSpeed) {
+	pulseFrames_ += std::max(animSpeed, 1);
 	if (isFading) {
 		// At least a frame per Update, or it would never finish.
 		fadeTimer += std::max(animSpeed, 1) / 60.0f;
@@ -422,6 +428,340 @@ void PSPDialog::DisplayButtons(int flags, std::string_view caption) {
 		std::string_view text = useCaption ? safeCaption : di->T("Back");
 		PPGeDrawImage(cancelButtonImg, x1, 256, 11.5f, 11.5f, textStyle);
 		PPGeDrawText(text, x1 + 14.5f, 252, textStyle);
+	}
+}
+
+// The firmware's button guide, page_btnnavi in 6.61's system_plugin_fg.rco. Its objects are in
+// paf's coordinates (origin at the screen's center, y up): the cross group at (-49, -127), the
+// circle group at (29, -127), each the centre of the icon's shadow, with the icon centred 2 left
+// and 2 up of it and the label starting 7 right of it. Labels at text size 7.0 (the PGF fonts are
+// 10.125). Checked against a screenshot of a PSP's message dialog: the circle's centre at
+// (266.5, 260.5), "Back" from x 277 on a baseline at 265.
+namespace {
+const float BTNNAVI_CROSS_X = 240.0f - 49.0f;
+const float BTNNAVI_CIRCLE_X = 240.0f + 29.0f;
+const float BTNNAVI_Y = 136.0f + 127.0f;
+const float BTNNAVI_LABEL_BASELINE = 265.0f;
+const float FIRMWARE_FONT_SIZE = 10.125f;
+const float BTNNAVI_LABEL_SCALE = 7.0f / FIRMWARE_FONT_SIZE;
+}
+
+PPGeStyle PSPDialog::FirmwareTextStyle(PPGeAlign align, float scale) {
+	PPGeStyle style = FadedStyle(align, scale);
+	// The firmware's soft text shadow (see PPGeMakeFirmwareTextShadow), tuned until fitting the
+	// same model to our render and to a PSP's screenshot gives the same blur, offset and strength.
+	style.hasShadow = true;
+	style.shadowColor = CalcFadedColor(0xE0000000);
+	style.shadowOffsetX = 3.5f;
+	style.shadowOffsetY = 3.75f;
+	return style;
+}
+
+std::string PSPDialog::FirmwareText(const char *label, std::string_view fallback) {
+	const pspUtilityDialogCommon *common = GetCommonParam();
+	std::string text = FirmwareSystemText(label, common ? (int)common->language : 1);
+	return text.empty() ? std::string(fallback) : text;
+}
+
+void PSPDialog::DisplayButtonsFirmware(int flags, std::string_view caption) {
+	const pspUtilityDialogCommon *commonParams = GetCommonParam();
+	if (!commonParams) {
+		return;
+	}
+
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	PPGeSetFirmwareFont(true);
+	const PPGeStyle labelStyle = FirmwareTextStyle(PPGeAlign::BOX_LEFT, BTNNAVI_LABEL_SCALE);
+	const float labelTop = BTNNAVI_LABEL_BASELINE - PPGeFirmwareFontAscent() * BTNNAVI_LABEL_SCALE;
+	const PPGeImageStyle imageStyle = FadedImageStyle();
+
+	// The cross is always on the left and the circle on the right. What they say follows which one
+	// confirms, as the game asked (the same as the input uses).
+	const bool circleConfirms = okButtonFlag == CTRL_CIRCLE;
+	struct Slot {
+		const char *icon;
+		const char *shadow;
+		float x;
+		int button;
+	};
+	const Slot slots[2] = {
+		{ "tex_cross", "tex_cross_shadow", BTNNAVI_CROSS_X, circleConfirms ? DS_BUTTON_CANCEL : DS_BUTTON_OK },
+		{ "tex_circle", "tex_circle_shadow", BTNNAVI_CIRCLE_X, circleConfirms ? DS_BUTTON_OK : DS_BUTTON_CANCEL },
+	};
+	for (const Slot &slot : slots) {
+		if (!(flags & slot.button)) {
+			continue;
+		}
+		std::string text;
+		if (!caption.empty()) {
+			char safeCaption[65]{};
+			truncate_cpy(safeCaption, sizeof(safeCaption), caption);
+			text = safeCaption;
+		} else if (slot.button == DS_BUTTON_OK) {
+			text = FirmwareText("msgsystem_enter", di->T("Enter"));
+		} else {
+			text = FirmwareText("msgsystem_back", di->T("Back"));
+		}
+
+		PPGeImage *icon = PPGeFirmwareImage("system_plugin_fg.rco", slot.icon);
+		PPGeImage *shadow = PPGeFirmwareImage("system_plugin_fg.rco", slot.shadow);
+		if (shadow && icon) {
+			shadow->SetTexture();
+			const float sw = (float)shadow->ContentWidth(), sh = (float)shadow->Height();
+			PPGeDrawFirmwareImage(shadow, slot.x - sw / 2.0f, BTNNAVI_Y - sh / 2.0f, 0, 0, imageStyle);
+		}
+		if (icon) {
+			icon->SetTexture();
+			const float iw = (float)icon->ContentWidth(), ih = (float)icon->Height();
+			PPGeDrawFirmwareImage(icon, slot.x - 2.0f - iw / 2.0f, BTNNAVI_Y - 2.0f - ih / 2.0f, 0, 0, imageStyle);
+		}
+		PPGeDrawText(text, slot.x + 7.0f, labelTop, labelStyle);
+	}
+}
+
+// The firmware's message box, measured from a screenshot and photos of a PSP-2000 on 6.61 (the
+// layout is drawn by sceVshCommonGui, not described in an RCO). Two separator lines, one pixel of
+// white at about 65%, the box centred at y 135.5. The text is ltn0.pgf at size 7.605 (from
+// common_gui.prx), lines 18.86 apart (8 lines of scrolling text span 132), the block centred with
+// its lines left aligned. Yes's advance ends 19.5 left of the centre (its ink about 22.5) and No
+// starts 19.5 right of it (from a savedata dialog's screenshots, which fit the message dialog's
+// too), the chosen one on tex_default_text_focus (system_plugin.rco).
+namespace {
+const float FW_TEXT_SCALE = 7.605f / FIRMWARE_FONT_SIZE;
+const float FW_LINE_STEP = 18.86f;
+const float FW_BOX_CENTER_Y = 135.5f;
+const float FW_TOP_TO_FIRST_BASELINE = 28.5f;
+const float FW_TEXT_TO_BUTTONS = 33.2f;  // Baseline to baseline.
+const float FW_LAST_BASELINE_TO_BOTTOM = 15.5f;
+// A box of text that scrolls is a little shorter at the bottom (screenshots of PSP Tool's credits).
+const float FW_LAST_BASELINE_TO_BOTTOM_SCROLLING = 14.5f;
+// It scrolls 12 pixels a step, the last step up or down going all the way.
+const float FW_SCROLL_STEP = 12.0f;
+// And its text sits a little right of the centre, next to the scroll bar.
+const float FW_SCROLLING_TEXT_SHIFT = 2.5f;
+// The scroll bar left of the text (system_plugin.rco's tex_default_scroll_*): the bar from y 64 to
+// 208 at x 78, the arrows above and below it while there's more to see that way.
+const float FW_SCROLLBAR_X = 78.0f;
+const float FW_SCROLLBAR_TOP = 64.0f;
+const float FW_SCROLLBAR_BOTTOM = 208.0f;
+const float FW_YES_RIGHT = -19.5f;
+const float FW_NO_LEFT = 19.5f;
+const int FW_MAX_VISIBLE_LINES = 8;
+// The focus' and selection glow's pulse, from a video of a PSP's save dialog: up and down at an
+// even pace, 18 frames (at 30 a second) each way, starting from nothing when the focus moves.
+const float FW_PULSE_PERIOD = 1.2f;
+}
+
+float PSPDialog::FirmwarePulse() const {
+	const float t = (float)pulseFrames_ / (60.0f * FW_PULSE_PERIOD);
+	const float phase = t - floorf(t);
+	return phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
+}
+
+void PSPDialog::UpdateScroll(float visibleHeight, float totalHeight, float step) {
+	if (visibleHeight >= totalHeight) {
+		return;
+	}
+	const float scrollMax = totalHeight - visibleHeight;
+	// A step a press, repeating while held.
+	auto buttonDown = [this](int btn, int &held) {
+		if (IsButtonPressed(btn)) {
+			held = 0;
+			return true;
+		}
+		return IsButtonHeld(btn, held, 24, 6);
+	};
+	if (buttonDown(CTRL_DOWN, framesDownHeld_) && scrollPos_ < scrollMax) {
+		scrollPos_ += step;
+		if (scrollMax - scrollPos_ < step) {
+			scrollPos_ = scrollMax;
+		}
+	}
+	if (buttonDown(CTRL_UP, framesUpHeld_) && scrollPos_ > 0.0f) {
+		scrollPos_ -= step;
+		if (scrollPos_ < step) {
+			scrollPos_ = 0.0f;
+		}
+	}
+}
+
+void PSPDialog::DisplayScrollBarFirmware(float visibleLines, float totalLines, float scrollPos, float scrollMax) {
+	PPGeImage *base = PPGeFirmwareImage("system_plugin.rco", "tex_default_scroll_base");
+	PPGeImage *baseShadow = PPGeFirmwareImage("system_plugin.rco", "tex_default_scroll_base_shadow");
+	PPGeImage *slider = PPGeFirmwareImage("system_plugin.rco", "tex_default_scroll_slider");
+	if (!base || !slider) {
+		return;
+	}
+	const PPGeImageStyle style = FadedImageStyle();
+	const float barHeight = FW_SCROLLBAR_BOTTOM - FW_SCROLLBAR_TOP;
+	if (baseShadow) {
+		baseShadow->SetTexture();
+		const float sw = (float)baseShadow->ContentWidth(), sh = (float)baseShadow->Height();
+		const float bw = (float)base->ContentWidth(), bh = (float)base->Height();
+		// Centred on the bar, 2 right and 2 down.
+		PPGeDrawFirmwareImageFrame(baseShadow, FW_SCROLLBAR_X - (sw - bw) / 2.0f + 2.0f, FW_SCROLLBAR_TOP - (sh - bh) / 2.0f + 2.0f, sw, barHeight + sh - bh, sw / 2.0f, sh / 2.0f - 0.5f, style);
+	}
+	base->SetTexture();
+	PPGeDrawFirmwareImageFrame(base, FW_SCROLLBAR_X, FW_SCROLLBAR_TOP, (float)base->ContentWidth(), barHeight, 3.0f, 2.0f, style);
+
+	// Its edge pixels are see-through, as are the bar's: the inner parts line up. Its length is the
+	// part of the text in view, counting a line more than there is (which fits the screenshots).
+	const float inner = barHeight - 2.0f;
+	const float length = std::max(8.0f, roundf(inner * visibleLines / (totalLines + 1.0f)));
+	const float top = FW_SCROLLBAR_TOP + roundf((inner - length) * (scrollMax > 0.0f ? scrollPos / scrollMax : 0.0f));
+	slider->SetTexture();
+	PPGeDrawFirmwareImageFrame(slider, FW_SCROLLBAR_X, top, (float)slider->ContentWidth(), length + 2.0f, 3.0f, 2.0f, style);
+
+	// The arrows, their tips at y 54 and 217.
+	struct Arrow {
+		const char *image;
+		const char *shadow;
+		float centerY;
+		bool shown;
+	};
+	const Arrow arrows[] = {
+		{ "tex_default_scroll_arrow_up", "tex_default_scroll_arrow_up_shadow", 56.5f, scrollPos > 0.0f },
+		{ "tex_default_scroll_arrow_down", "tex_default_scroll_arrow_down_shadow", 214.5f, scrollPos < scrollMax },
+	};
+	const float centerX = FW_SCROLLBAR_X + 3.0f;
+	for (const Arrow &arrow : arrows) {
+		if (!arrow.shown) {
+			continue;
+		}
+		if (PPGeImage *shadow = PPGeFirmwareImage("system_plugin.rco", arrow.shadow)) {
+			shadow->SetTexture();
+			const float w = (float)shadow->ContentWidth(), h = (float)shadow->Height();
+			PPGeDrawFirmwareImage(shadow, roundf(centerX - w / 2.0f) + 2.0f, roundf(arrow.centerY - h / 2.0f) + 2.0f, 0, 0, style);
+		}
+		if (PPGeImage *image = PPGeFirmwareImage("system_plugin.rco", arrow.image)) {
+			image->SetTexture();
+			const float w = (float)image->ContentWidth(), h = (float)image->Height();
+			PPGeDrawFirmwareImage(image, roundf(centerX - w / 2.0f), roundf(arrow.centerY - h / 2.0f), 0, 0, style);
+		}
+	}
+}
+
+void PSPDialog::DisplayMessageBoxFirmware(std::string_view text, float centerX, float boxWidth, float wrapWidth, bool hasYesNo, bool hasOK, bool canScroll, bool interactive, const FirmwareBoxAnim &anim) {
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	// The line spacing that puts lines FW_LINE_STEP apart at this size.
+	const float fontLineHeight = PPGeFirmwareFontLineHeight() * FW_TEXT_SCALE;
+	PPGeSetFirmwareFont(true, fontLineHeight > 0.0f ? FW_LINE_STEP / fontLineHeight : 1.5f);
+
+	const float ascent = PPGeFirmwareFontAscent() * FW_TEXT_SCALE;
+
+	float textWidth = 0.0f, textHeight = 0.0f;
+	PPGeMeasureText(&textWidth, &textHeight, text, FW_TEXT_SCALE, PPGE_LINE_WRAP_WORD, (int)wrapWidth);
+	float oneLine = 0.0f, twoLines = 0.0f;
+	PPGeMeasureText(nullptr, &oneLine, "|", FW_TEXT_SCALE);
+	PPGeMeasureText(nullptr, &twoLines, "|\n|", FW_TEXT_SCALE);
+	const float lineStep = std::max(1.0f, twoLines - oneLine);
+	// The lines as laid out, to draw one at a time when scrolling.
+	const std::vector<PPGeTextLine> wrapped = PPGeWrapFirmwareText(text, FW_TEXT_SCALE, wrapWidth);
+	const int lines = !wrapped.empty() ? (int)wrapped.size() : std::max(1, (int)((textHeight - oneLine) / lineStep + 0.5f) + 1);
+	const int visibleLines = canScroll ? std::min(lines, FW_MAX_VISIBLE_LINES) : lines;
+	const bool hasButtons = hasYesNo || hasOK;
+	// First to last visible baseline. lineStep is rounded, so use the text's own height when it all
+	// fits.
+	// Scrolling, the box fits whole lines FW_LINE_STEP apart (which the lines' rounded positions are,
+	// near enough).
+	const float textSpan = visibleLines == lines ? textHeight - oneLine : (visibleLines - 1) * FW_LINE_STEP;
+
+	const float bottomMargin = visibleLines < lines ? FW_LAST_BASELINE_TO_BOTTOM_SCROLLING : FW_LAST_BASELINE_TO_BOTTOM;
+	const float boxHeight = FW_TOP_TO_FIRST_BASELINE + textSpan + (hasButtons ? FW_TEXT_TO_BUTTONS : 0.0f) + bottomMargin;
+	const float topLine = roundf(FW_BOX_CENTER_Y - boxHeight / 2.0f);
+	const float bottomLine = topLine + roundf(boxHeight);
+	const float firstBaseline = topLine + FW_TOP_TO_FIRST_BASELINE;
+	const float buttonBaseline = firstBaseline + textSpan + FW_TEXT_TO_BUTTONS;
+
+	const float lineX1 = centerX - boxWidth / 2.0f, lineX2 = centerX + boxWidth / 2.0f;
+	{
+		AlphaScope lineFade(this, anim.lineAlpha);
+		const float inset = anim.lineInset + roundf((1.0f - std::clamp(anim.lineSpread, 0.0f, 1.0f)) * (bottomLine - topLine) / 2.0f);
+		for (float y : { topLine + inset, bottomLine - inset }) {
+			PPGeDrawRect(lineX1, y, lineX2, y + 1.0f, CalcFadedColor(0xA6FFFFFF));
+		}
+	}
+	AlphaScope contentFade(this, anim.contentAlpha);
+
+	// The text: the block centred, its lines left aligned in it.
+	const float textTop = firstBaseline - ascent;
+	const float visibleHeight = oneLine + textSpan;
+	const float totalHeight = textHeight;
+	const PPGeStyle blockStyle = FirmwareTextStyle(PPGeAlign::BOX_LEFT, FW_TEXT_SCALE);
+	const bool scrolls = visibleHeight < totalHeight;
+	const float textLeft = roundf(centerX - textWidth / 2.0f + (scrolls ? FW_SCROLLING_TEXT_SHIFT : 0.0f));
+	if (scrolls && !wrapped.empty()) {
+		// Scrolling text: the firmware only shows the lines that fit in the box whole, so nothing is
+		// cut off (its soft shadow included).
+		for (const PPGeTextLine &line : wrapped) {
+			const float top = textTop + line.top - scrollPos_;
+			if (top >= textTop - 1.0f && top + oneLine <= textTop + visibleHeight + 1.0f) {
+				PPGeDrawText(line.text, textLeft, top, blockStyle);
+			}
+		}
+	} else if (scrolls) {
+		PPGeScissor(0, (int)(textTop - 2), 480, (int)(textTop + visibleHeight + 4));
+		PPGeDrawTextWrapped(text, textLeft, textTop - scrollPos_, wrapWidth, 0, blockStyle);
+		PPGeScissorReset();
+	} else {
+		PPGeDrawTextWrapped(text, textLeft, textTop - scrollPos_, wrapWidth, 0, blockStyle);
+	}
+	if (interactive) {
+		UpdateScroll(visibleHeight, totalHeight, FW_SCROLL_STEP);
+	}
+	if (scrolls) {
+		DisplayScrollBarFirmware((float)visibleLines, (float)lines, scrollPos_, totalHeight - visibleHeight);
+	}
+
+	if (!hasButtons) {
+		return;
+	}
+
+	PPGeImage *focus = PPGeFirmwareImage("system_plugin.rco", "tex_default_text_focus");
+	// left is where the word starts.
+	auto drawButton = [&](std::string_view label, float left, bool selected) {
+		float w = 0.0f;
+		PPGeMeasureText(&w, nullptr, label, FW_TEXT_SCALE);
+		if (selected) {
+			// The focus image is 60x18 with the box in its middle 30 columns (and rows 1-16): drawn
+			// twice as wide as the box, which is the word's ink and 6 either side, from 14 above
+			// the baseline to 2 below. It pulses in and out.
+			const float boxWidth = std::max(30.0f, roundf(w + 10.0f));
+			const float imageWidth = boxWidth * 2.0f;
+			const float centre = left + w / 2.0f;
+			const u32 alpha = (u32)(FirmwarePulse() * 255.0f);
+			if (focus) {
+				PPGeImageStyle focusStyle;
+				focusStyle.color = CalcFadedColor((alpha << 24) | 0xFFFFFF);
+				PPGeDrawFirmwareImage(focus, floorf(centre - imageWidth / 2.0f), buttonBaseline - 15.0f, imageWidth, 18.0f, focusStyle);
+			} else {
+				PPGeDrawRect(centre - boxWidth / 2.0f, buttonBaseline - 14.0f, centre + boxWidth / 2.0f, buttonBaseline + 2.0f, CalcFadedColor(((alpha / 2) << 24) | 0xFFFFFF));
+			}
+		}
+		PPGeDrawText(label, left, buttonBaseline - ascent, blockStyle);
+	};
+
+	if (hasYesNo) {
+		const std::string yes = FirmwareText("msgsystem_yes", di->T("Yes"));
+		float yesWidth = 0.0f;
+		PPGeMeasureText(&yesWidth, nullptr, yes, FW_TEXT_SCALE);
+		drawButton(yes, roundf(centerX + FW_YES_RIGHT - yesWidth), yesnoChoice == 1);
+		drawButton(FirmwareText("msgsystem_no", di->T("No")), roundf(centerX + FW_NO_LEFT), yesnoChoice == 0);
+		if (!interactive) {
+			return;
+		}
+		if (IsButtonPressed(CTRL_LEFT) && yesnoChoice == 0) {
+			yesnoChoice = 1;
+			pulseFrames_ = 0;
+		} else if (IsButtonPressed(CTRL_RIGHT) && yesnoChoice == 1) {
+			yesnoChoice = 0;
+			pulseFrames_ = 0;
+		}
+	} else if (hasOK) {
+		const std::string ok = FirmwareText("msgsystem_ok", di->T("OK"));
+		float okWidth = 0.0f;
+		PPGeMeasureText(&okWidth, nullptr, ok, FW_TEXT_SCALE);
+		drawButton(ok, roundf(centerX - okWidth / 2.0f), true);
 	}
 }
 
