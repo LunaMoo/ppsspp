@@ -550,12 +550,41 @@ const int FW_MAX_VISIBLE_LINES = 8;
 // The focus' and selection glow's pulse, from a video of a PSP's save dialog: up and down at an
 // even pace, 18 frames (at 30 a second) each way, starting from nothing when the focus moves.
 const float FW_PULSE_PERIOD = 1.2f;
+// page_busy in system_plugin_fg.rco: busy_icon at (226, -122), 17x17, its shadow 2 right and 2 down.
+// tex_busy holds its 60 frames, 17x17 each, two to a row.
+const float FW_BUSY_X = 240.0f + 226.0f;
+const float FW_BUSY_Y = 136.0f + 122.0f;
+const float FW_BUSY_SIZE = 17.0f;
+const int FW_BUSY_FRAMES = 60;
 }
 
 float PSPDialog::FirmwarePulse() const {
 	const float t = (float)pulseFrames_ / (60.0f * FW_PULSE_PERIOD);
 	const float phase = t - floorf(t);
 	return phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
+}
+
+void PSPDialog::DisplayBusyFirmware() {
+	PPGeImage *icon = PPGeFirmwareImage("system_plugin_fg.rco", "tex_busy");
+	PPGeImage *shadow = PPGeFirmwareImage("system_plugin_fg.rco", "tex_busy_shadow");
+	// One frame of the animation per frame of video.
+	const int frame = pulseFrames_ % FW_BUSY_FRAMES;
+	const float half = FW_BUSY_SIZE / 2.0f;
+	auto draw = [&](PPGeImage *image, float cx, float cy) {
+		if (!image) {
+			return;
+		}
+		image->SetTexture();
+		if (!image->IsValid() || image->Width() == 0) {
+			return;
+		}
+		const float tw = (float)image->Width(), th = (float)image->Height();
+		const float u = (frame % 2) * FW_BUSY_SIZE, v = (frame / 2) * FW_BUSY_SIZE;
+		PPGeDrawImage(cx - half, cy - half, FW_BUSY_SIZE, FW_BUSY_SIZE, u / tw, v / th, (u + FW_BUSY_SIZE) / tw, (v + FW_BUSY_SIZE) / th, image->Width(), image->Height(), FadedImageStyle());
+	};
+	draw(shadow, FW_BUSY_X + 2.0f, FW_BUSY_Y + 2.0f);
+	draw(icon, FW_BUSY_X, FW_BUSY_Y);
+	PPGeSetDefaultTexture();
 }
 
 void PSPDialog::UpdateScroll(float visibleHeight, float totalHeight, float step) {

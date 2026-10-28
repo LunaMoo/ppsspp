@@ -137,6 +137,8 @@ protected:
 	void DisplayMessageBoxFirmware(std::string_view text, float centerX, float boxWidth, float wrapWidth, bool hasYesNo, bool hasOK, bool canScroll, bool interactive = true, const FirmwareBoxAnim &anim = FirmwareBoxAnim());
 	// The firmware's highlights pulse: 0 to 1 and back.
 	float FirmwarePulse() const;
+	// The firmware's busy icon at the bottom right, for while it saves or loads.
+	void DisplayBusyFirmware();
 	void UpdateScroll(float visibleHeight, float totalHeight, float step);
 	// The firmware's scroll bar, left of a message box's text.
 	void DisplayScrollBarFirmware(float visibleLines, float totalLines, float scrollPos, float scrollMax);
