@@ -411,7 +411,7 @@ static bool SwapInUMD(FileLoader *loadedFile, IdentifiedFileType fileType, const
 		return false;
 	}
 
-	// Only now that the old disc is unmounted, it's safe to let go of its loader.
+	// Only now that the old disc (if there was one) is unmounted, it's safe to let go of its loader.
 	UpdateLoadedFile(loadedFile);
 	*fileLoader = loadedFile;
 	return true;
