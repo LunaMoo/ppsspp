@@ -347,6 +347,12 @@ enum class RemoteISOShareType : int {
 	LOCAL_FOLDER,
 };
 
+// How the system dialogs games open are drawn.
+enum class DialogStyle {
+	BUILTIN = 0,  // PPSSPP's own.
+	FIRMWARE = 1,  // With the installed firmware's fonts, strings and layout, as on a PSP.
+};
+
 enum class GameBrowserViewMode : int {
 	GRID = 0,
 	LIST = 1,  // XMB-style, with full size icons and the ICON1.PMF video. Old configs may have 2 (the large list) here.

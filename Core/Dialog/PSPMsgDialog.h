@@ -72,6 +72,8 @@ protected:
 private:
 	void FormatErrorCode(uint32_t code);
 	void DisplayMessage(const std::string &text, bool hasYesNo = false, bool hasOK = false);
+	// The same in the PSP firmware's style.
+	void DisplayMessageFirmware(const std::string &text, bool hasYesNo, bool hasOK);
 
 	enum Flags {
 		DS_MSG          = 0x1,

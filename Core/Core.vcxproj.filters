@@ -414,6 +414,9 @@
     <ClCompile Include="Dialog\PSPDialog.cpp">
       <Filter>Dialog</Filter>
     </ClCompile>
+    <ClCompile Include="Dialog\FirmwareDialogStyle.cpp">
+      <Filter>Dialog</Filter>
+    </ClCompile>
     <ClCompile Include="Dialog\PSPMsgDialog.cpp">
       <Filter>Dialog</Filter>
     </ClCompile>
@@ -1876,6 +1879,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="Dialog\PSPDialog.h">
+      <Filter>Dialog</Filter>
+    </ClInclude>
+    <ClInclude Include="Dialog\FirmwareDialogStyle.h">
       <Filter>Dialog</Filter>
     </ClInclude>
     <ClInclude Include="Dialog\PSPMsgDialog.h">

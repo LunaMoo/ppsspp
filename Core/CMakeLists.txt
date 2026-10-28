@@ -318,6 +318,8 @@ add_library(Core STATIC
 	Debugger/SymbolMap.cpp
 	Debugger/SymbolMap.h
 	Debugger/Watch.h
+	Dialog/FirmwareDialogStyle.cpp
+	Dialog/FirmwareDialogStyle.h
 	Dialog/PSPDialog.cpp
 	Dialog/PSPDialog.h
 	Dialog/PSPGamedataInstallDialog.cpp

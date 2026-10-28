@@ -20,6 +20,7 @@
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/StringUtils.h"
+#include "Core/Dialog/FirmwareDialogStyle.h"
 #include "Core/Dialog/PSPMsgDialog.h"
 #include "Core/Dialog/PSPSaveDialog.h"
 #include "Core/Util/PPGeDraw.h"
@@ -159,6 +160,15 @@ int PSPMsgDialog::Init(unsigned int paramAddr) {
 
 
 void PSPMsgDialog::FormatErrorCode(uint32_t code) {
+	if (UseFirmwareMsgDialogStyle()) {
+		// The firmware's own message for the code, in the language the game asked for.
+		std::string message = FirmwareErrorMessage(code, messageDialog.common.language);
+		if (!message.empty()) {
+			snprintf(msgText, 512, "%s (%08x)", message.c_str(), code);
+			return;
+		}
+	}
+
 	auto err = GetI18NCategory(I18NCat::ERRORS);
 
 	switch (code) {
@@ -192,6 +202,11 @@ void PSPMsgDialog::FormatErrorCode(uint32_t code) {
 }
 
 void PSPMsgDialog::DisplayMessage(const std::string &text, bool hasYesNo, bool hasOK) {
+	if (UseFirmwareMsgDialogStyle() && PPGeHasFirmwareFont()) {
+		DisplayMessageFirmware(text, hasYesNo, hasOK);
+		return;
+	}
+
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 
 	PPGeStyle buttonStyle = FadedStyle(PPGeAlign::BOX_CENTER, FONT_SCALE);
@@ -286,6 +301,22 @@ void PSPMsgDialog::DisplayMessage(const std::string &text, bool hasYesNo, bool h
 	PPGeDrawRect(40.0f, ey, 440.0f, ey + 1.0f, CalcFadedColor(0xFFFFFFFF));
 }
 
+// The firmware's message box (see PSPDialog::DisplayMessageBoxFirmware), across the screen's middle.
+// Opening, its lines fade in while moving apart from the middle, then the text fades in: two frames
+// each at 30 a second, with a frame between, in a video of a PSP's message dialog.
+void PSPMsgDialog::DisplayMessageFirmware(const std::string &text, bool hasYesNo, bool hasOK) {
+	const float LINES_TIME = 1.0f / 15.0f;
+	const float TEXT_START = 0.1f;
+	const float TEXT_TIME = 1.0f / 15.0f;
+	FirmwareBoxAnim anim;
+	if (isFading && fadeIn) {
+		anim.lineSpread = std::clamp(fadeTimer / LINES_TIME, 0.0f, 1.0f);
+		anim.lineAlpha = anim.lineSpread;
+		anim.contentAlpha = std::clamp((fadeTimer - TEXT_START) / TEXT_TIME, 0.0f, 1.0f);
+	}
+	DisplayMessageBoxFirmware(text, 240.0f, 360.0f, 330.0f, hasYesNo, hasOK, true, true, anim);
+}
+
 int PSPMsgDialog::Update(int animSpeed) {
 	if (GetStatus() != SCE_UTILITY_STATUS_RUNNING) {
 		return SCE_ERROR_UTILITY_INVALID_STATUS;
@@ -302,22 +333,36 @@ int PSPMsgDialog::Update(int animSpeed) {
 		UpdateCommon();
 		UpdateFade(animSpeed);
 
-		StartDraw();
+		const bool firmwareStyle = UseFirmwareMsgDialogStyle() && PPGeHasFirmwareFont();
+		StartDraw(!firmwareStyle);
 		// white -> RGB(168,173,189), black -> RGB(129,134,150)
 		// (255 - a) + (x * a / 255) = 173,  x * a / 255 = 134
 		// a = 255 - w + b = 158, x = b * 255 / a = ?
 		// but is not drawn using x * a + y * (255 - a) here?
 		//PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0x9EF2D8D0));
-		PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0xC0C8B2AC));
+		if (firmwareStyle) {
+			// The same measurement solved for normal blending: black comes out as 129 = a * c, white
+			// as 168 = a * c + (1 - a) * 255, so a = 216/255 and c = (152, 158, 177).
+			PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0xD8B19E98));
+		} else {
+			PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0xC0C8B2AC));
+		}
+		auto displayButtons = [&](int buttons, std::string_view caption) {
+			if (firmwareStyle) {
+				DisplayButtonsFirmware(buttons, caption);
+			} else {
+				DisplayButtons(buttons, caption);
+			}
+		};
 
 		if ((flag & DS_MSG) || (flag & DS_ERRORMSG))
 			DisplayMessage(msgText, (flag & DS_YESNO) != 0, (flag & DS_OK) != 0);
 
 		if (flag & (DS_OK | DS_VALIDBUTTON)) 
-			DisplayButtons(DS_BUTTON_OK, messageDialog.common.size == SCE_UTILITY_MSGDIALOG_SIZE_V3 ? StringViewFromFixedSizeField(messageDialog.okayButton) : "");
+			displayButtons(DS_BUTTON_OK, messageDialog.common.size == SCE_UTILITY_MSGDIALOG_SIZE_V3 ? StringViewFromFixedSizeField(messageDialog.okayButton) : "");
 
 		if (flag & DS_CANCELBUTTON)
-			DisplayButtons(DS_BUTTON_CANCEL, messageDialog.common.size == SCE_UTILITY_MSGDIALOG_SIZE_V3 ? StringViewFromFixedSizeField(messageDialog.cancelButton) : "");
+			displayButtons(DS_BUTTON_CANCEL, messageDialog.common.size == SCE_UTILITY_MSGDIALOG_SIZE_V3 ? StringViewFromFixedSizeField(messageDialog.cancelButton) : "");
 
 		if (IsButtonPressed(cancelButtonFlag) && (flag & DS_CANCELBUTTON))
 		{

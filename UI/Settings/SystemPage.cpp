@@ -41,6 +41,7 @@
 #include "Common/UI/View.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/Dialog/FirmwareDialogStyle.h"
 #include "Core/HLE/sceUtility.h"
 #include "Core/Reporting.h"
 #include "Core/System.h"
@@ -232,6 +233,9 @@ static void BuildPSPSettingsPage(SettingsPage *page) {
 	page->Setting(&g_Config.iHomeScreenStyle).EnabledFunc([] {
 		return ImposeHomeScreen::FirmwareArtAvailable();
 	});
+	page->Setting(&g_Config.iMsgDialogStyle).EnabledFunc([] {
+		return FirmwareDialogStyleAvailable();
+	}).Hint({ I18NCat::SYSTEM, "DialogStyleHint", "The system dialogs games open, drawn with the PSP firmware's fonts and messages. Needs an installed firmware." });
 	page->Setting(&g_Config.iVolumeBarStyle);
 	page->Setting(&g_Config.bGameBootAnimation).EnabledFunc([] {
 		return GameBootAnimation::Available();

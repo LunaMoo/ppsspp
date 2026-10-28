@@ -571,6 +571,7 @@
     </ClCompile>
     <ClCompile Include="Dialog\PSPGamedataInstallDialog.cpp" />
     <ClCompile Include="Dialog\PSPDialog.cpp" />
+    <ClCompile Include="Dialog\FirmwareDialogStyle.cpp" />
     <ClCompile Include="Dialog\PSPMsgDialog.cpp" />
     <ClCompile Include="Dialog\PSPNetconfDialog.cpp" />
     <ClCompile Include="Dialog\PSPNpSigninDialog.cpp" />
@@ -1077,6 +1078,7 @@
     <ClInclude Include="Debugger\SymbolMap.h" />
     <ClInclude Include="Dialog\PSPGamedataInstallDialog.h" />
     <ClInclude Include="Dialog\PSPDialog.h" />
+    <ClInclude Include="Dialog\FirmwareDialogStyle.h" />
     <ClInclude Include="Dialog\PSPMsgDialog.h" />
     <ClInclude Include="Dialog\PSPNetconfDialog.h" />
     <ClInclude Include="Dialog\PSPNpSigninDialog.h" />
