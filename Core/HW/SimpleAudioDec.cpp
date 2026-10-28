@@ -394,9 +394,9 @@ bool FFmpegAudioDecoder::Decode(const uint8_t *inbuf, int inbytes, int *inbytesC
 			ERROR_LOG(Log::ME, "Can't convert decoded audio (format %d) to s16", frame_->format);
 			return false;
 		}
-		if (swrRet > 0) {
+		if (samples > 0) {
 			// We always convert to stereo.
-			ApplyDecodedAudioVolume(outbuf, swrRet * 2);
+			ApplyDecodedAudioVolume(outbuf, samples * 2);
 		}
 		// output stereo samples per frame
 		if (outSamples) {
