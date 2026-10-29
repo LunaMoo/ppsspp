@@ -129,7 +129,16 @@ jobs:
         cache: 'gradle'
 
     - name: Assemble APK
-      run: ./gradlew assemble${{ inputs.androidVariant }} --stacktrace
+      shell: bash
+      run: |
+        set -o pipefail
+        ./gradlew assemble${{ inputs.androidVariant }} --stacktrace 2>&1 | tee gradle.log || {
+          # Show the errors on the run's summary page, without digging through the log.
+          grep -E "error:|error [A-Z]+[0-9]+|undefined reference|FAILED:|What went wrong" -A3 gradle.log | head -60 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit 1
+        }
 
     - name: Package
       run: |
