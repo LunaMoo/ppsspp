@@ -752,7 +752,7 @@ endif()
 list(APPEND CoreExtraLibs armips)
 
 target_link_libraries(Core GPU Common chdr kirk cityhash sfmt19937 xbrz xxhash libdeflate flac ipbp rcheevos at3_standalone lua
-	aemu_postoffice_client ${CoreExtraLibs} ${CMAKE_DL_LIBS})
+	aemu_postoffice_client aemu_postoffice_server ${CoreExtraLibs} ${CMAKE_DL_LIBS})
 if(USE_SYSTEM_LIBCHDR)
 	# The CHD writer's LZMA encoder.
 	target_link_libraries(Core lzma_encoder)
