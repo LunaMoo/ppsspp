@@ -439,6 +439,7 @@ static constexpr ConfigSetting generalSettings[] = {
 
 	ConfigSetting("ShowRegionOnGameIcon", SETTING(g_Config, bShowRegionOnGameIcon), false, CfgFlag::DEFAULT),
 	ConfigSetting("ShowIDOnGameIcon", SETTING(g_Config, bShowIDOnGameIcon), false, CfgFlag::DEFAULT),
+	ConfigSetting("HideRecentTabSettings", SETTING(g_Config, bHideRecentTabSettings), false, CfgFlag::DEFAULT),
 	ConfigSetting("GameGridScale", SETTING(g_Config, fGameGridScale), &DefaultGameGridScale, CfgFlag::DEFAULT),
 	ConfigSetting("GameListScale", SETTING(g_Config, fGameListScale), &DefaultGameGridScale, CfgFlag::DEFAULT),
 	ConfigSetting("GridView4", SETTING(g_Config, iLegacyGridView4), -1, &LegacyGridViewToString, &LegacyGridViewFromString, CfgFlag::DONT_SAVE),

@@ -503,6 +503,7 @@ public:
 	int iShowStatusFlags;
 	bool bShowRegionOnGameIcon;
 	bool bShowIDOnGameIcon;
+	bool bHideRecentTabSettings;  // No view mode and settings buttons above the Recent games list.
 	float fGameGridScale;
 	float fGameListScale;
 	int iBackgroundAnimation;  // enum BackgroundAnimation

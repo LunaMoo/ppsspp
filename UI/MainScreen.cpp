@@ -1071,6 +1071,9 @@ void GridSettingsPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	extraInfoGroup->Add(new CheckBox(&g_Config.bShowIDOnGameIcon, sy->T("Show ID")));
 	extraInfoGroup->Add(new CheckBox(&g_Config.bShowRegionOnGameIcon, sy->T("Show region flag")));
 
+	ChoiceGroup *recentTabGroup = groupList->Add(new ChoiceGroup(mm->T("Recent")));
+	recentTabGroup->Add(new CheckBox(&g_Config.bHideRecentTabSettings, sy->T("Hide settings from Recent tab")));
+
 	if (g_Config.iMaxRecent > 0) {
 		ChoiceGroup *recentGroup = groupList->Add(new ChoiceGroup(sy->T("Clear Recent")));
 		recentGroup->Add(new Choice(sy->T("Clear Recent Games List")))->OnClick.Add([this](UI::EventParams &e) {

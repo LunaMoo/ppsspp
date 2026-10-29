@@ -345,7 +345,7 @@ void GameBrowser::Measure(const UIContext &dc, UI::MeasureSpec horiz, UI::Measur
 void GameBrowser::Draw(UIContext &dc) {
 	using namespace UI;
 
-	if (lastScale_ != *GameBrowserIconScale(ViewMode()) || lastViewMode_ != ViewMode()) {
+	if (lastScale_ != *GameBrowserIconScale(ViewMode()) || lastViewMode_ != ViewMode() || lastHideRecentSettings_ != g_Config.bHideRecentTabSettings) {
 		refreshPending_ = true;
 		// Keep the focus on the same game, as a keyboard zoom leaves it there.
 		if (gameList_ && focusPath_.empty()) {
@@ -423,6 +423,7 @@ void GameBrowser::Refresh() {
 
 	lastViewMode_ = ViewMode();
 	lastScale_ = *GameBrowserIconScale(lastViewMode_);
+	lastHideRecentSettings_ = g_Config.bHideRecentTabSettings;
 	const bool gridStyle = lastViewMode_ == GameBrowserViewMode::GRID;
 
 	// Kill all the contents
@@ -434,14 +435,18 @@ void GameBrowser::Refresh() {
 	gameList_ = nullptr;
 	gameGrid_ = nullptr;
 
+	// Recent isn't a real folder, so it gets no path or refresh.
+	const bool isRecent = path_.GetPath().ToString() == "!RECENT";
+
 	// Wraps the buttons onto another row when the screen is too narrow for them.
 	FlowLayout *topBar = new FlowLayout(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(0, 12, 8, 0)));
 	topBar->SetSpacing(10.0f);
 	topBar->SetRowSpacing(10.0f);
-	Add(topBar);
-
-	// Recent isn't a real folder, so it gets no path or refresh.
-	const bool isRecent = path_.GetPath().ToString() == "!RECENT";
+	// Without its buttons, the Recent list starts right at the top.
+	const bool hideTopBar = isRecent && g_Config.bHideRecentTabSettings;
+	if (!hideTopBar) {
+		Add(topBar);
+	}
 
 	std::string pathStr = path_.GetPath().IsNetworkRoot() ? std::string(mm->T("Network")) : GetFriendlyPath(path_.GetPath(), aliasMatch_, aliasDisplay_);
 
@@ -528,6 +533,9 @@ void GameBrowser::Refresh() {
 	Choice *gridSettingsChoice = topBar->Add(new Choice(ImageID("I_GEAR"), new LayoutParams(64.0f, 64.0f)));
 	gridSettingsChoice->SetRoundCorners(RoundCorners::All);
 	gridSettingsChoice->OnClick.Handle(this, &GameBrowser::GridSettingsClick);
+	if (hideTopBar) {
+		delete topBar;
+	}
 
 	if (gridStyle) {
 		// Measure sets the cell size.
