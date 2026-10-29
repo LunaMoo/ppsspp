@@ -1,0 +1,145 @@
+name: Manual Build Windows and Android
+
+# Run from the Actions tab: "Manual Build Windows and Android" > "Run workflow", pick the branch.
+# The builds are attached to the run as downloadable artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      windows:
+        type: boolean
+        description: 'Build Windows'
+        default: true
+      windowsPlatform:
+        type: choice
+        description: 'Windows platform'
+        default: 'x64'
+        options:
+        - x64
+        - ARM64
+        - both
+      android:
+        type: boolean
+        description: 'Build Android'
+        default: true
+      androidVariant:
+        type: choice
+        description: 'Android build variant'
+        default: 'NormalOptimized'
+        options:
+        - NormalOptimized
+        - NormalDebug
+        - VROptimized
+        - VRDebug
+        - LegacyOptimized
+
+env:
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.platform }}
+    if: ${{ inputs.windows }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.windowsPlatform == 'both' && '["x64","ARM64"]' || format('["{0}"]', inputs.windowsPlatform)) }}
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Check out submodules
+      shell: bash
+      run: .github/checkout-submodules.sh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3.0.0
+
+    - name: Check Valid Version Tags
+      id: valid-tags
+      shell: bash
+      run: |
+        # git describe needs tags for the version.
+        git fetch --deepen=15000 --no-recurse-submodules --tags || exit 0
+        echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT
+
+    - name: Fetch upstream tags
+      if: steps.valid-tags.outputs.count == '0'
+      shell: bash
+      run: |
+        git remote add upstream https://github.com/hrydgard/ppsspp.git
+        git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
+
+    - name: Create git-version.cpp
+      run: |
+        $GIT_VERSION=git describe --always
+        echo "const char *PPSSPP_GIT_VERSION = `"$GIT_VERSION`";" > git-version.cpp
+        echo "#define PPSSPP_GIT_VERSION_NO_UPDATE 1" >> git-version.cpp
+        if ($GIT_VERSION.StartsWith("v")) {
+          $WIN_VERSION_COMMA=$GIT_VERSION -replace '^v', '' -replace '-g[0-9a-f]+$', '' -replace '[-\.]', ','
+          echo "#define PPSSPP_WIN_VERSION_STRING `"$GIT_VERSION`"" > Windows/win-version.h
+          echo "#define PPSSPP_WIN_VERSION_COMMA $WIN_VERSION_COMMA" >> Windows/win-version.h
+          echo "#define PPSSPP_WIN_VERSION_NO_UPDATE 1" >> Windows/win-version.h
+        }
+
+    - name: Build
+      run: msbuild /m /p:TrackFileAccess=false /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ matrix.platform }} Windows/PPSSPP.sln
+
+    - name: Package
+      run: |
+        mkdir ppsspp
+        cp PPSSPP*.exe ppsspp/
+        cp Windows/*.bat ppsspp/
+        cp -r assets ppsspp/assets
+
+    - name: Upload
+      uses: actions/upload-artifact@v7
+      with:
+        name: PPSSPP-Windows-${{ matrix.platform }}-${{ github.run_number }}
+        path: ppsspp/
+
+  android:
+    name: Android ${{ inputs.androidVariant }}
+    if: ${{ inputs.android }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Check Valid Version Tags
+      id: valid-tags
+      shell: bash
+      run: |
+        echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT
+
+    - name: Fetch upstream tags # androidGitVersion needs a version tag
+      if: steps.valid-tags.outputs.count == '0'
+      run: |
+        git remote add upstream https://github.com/hrydgard/ppsspp.git
+        git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
+
+    - name: Setup JDK
+      uses: actions/setup-java@v6.0.1
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'gradle'
+
+    - name: Assemble APK
+      run: ./gradlew assemble${{ inputs.androidVariant }} --stacktrace
+
+    - name: Package
+      run: |
+        mkdir ppsspp
+        find android/build -name "*.apk" -exec cp {} ppsspp/ \;
+        ls -la ppsspp
+        test -n "$(ls ppsspp)"
+
+    - name: Upload
+      uses: actions/upload-artifact@v7
+      with:
+        name: PPSSPP-Android-${{ inputs.androidVariant }}-${{ github.run_number }}
+        path: ppsspp/
