@@ -228,14 +228,21 @@ void MainScreen::CreateRecentTab() {
 	using namespace UI;
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
 
+	bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
+
 	LinearLayout *tabContainer = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
 	tabContainer->SetSpacing(0.0f);
-	SearchBar *search = tabContainer->Add(new SearchBar(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 8, 8, 0))));
+	SearchBar *search;
+	if (portrait) {
+		search = tabContainer->Add(new SearchBar(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8, 8, 8, 0))));
+	} else {
+		// Added to the right column in CreateViews.
+		search = new SearchBar(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
+		recentSearchBar_ = search;
+	}
 
 	ScrollView *scrollView = tabContainer->Add(new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0f)));
 	scrollView->SetTag("MainScreenRecentGames");
-
-	bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
 
 	GameBrowser *tabRecentGames = new GameBrowser(GetRequesterToken(),
 		Path("!RECENT"), BrowseFlags::NONE, portrait, &g_Config.iGameBrowserView1, screenManager(), "", "",
@@ -445,6 +452,7 @@ void MainScreen::CreateViews() {
 	ViewGroup *leftColumn = tabHolder_;
 	tabHolder_->SetTag("MainScreenGames");
 	gameBrowsers_.clear();
+	recentSearchBar_ = nullptr;
 
 	tabHolder_->SetClip(true);
 
@@ -569,6 +577,10 @@ void MainScreen::CreateViews() {
 
 		LinearLayout *rightColumnChoices = rightColumnItems;
 		CreateMainButtons(rightColumnChoices, vertical);
+		if (recentSearchBar_) {
+			rightColumnItems->Add(new Spacer(24.0f));
+			rightColumnItems->Add(recentSearchBar_);
+		}
 
 		rightColumn->Add(rightColumnItems);
 

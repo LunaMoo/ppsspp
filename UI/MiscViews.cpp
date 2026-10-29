@@ -322,7 +322,7 @@ void SettingHint::Draw(UIContext &dc) {
 void SearchBar::Draw(UIContext &dc) {
 	using namespace UI;
 
-	dc.FillRect(dc.GetTheme().itemStyle.background, bounds_);
+	dc.FillRoundRect(dc.GetTheme().itemStyle.background, bounds_, dc.GetTheme().choiceRoundRadius);
 
 	const ImageID searchIcon = ImageID("I_SEARCH");
 	const AtlasImage *image = dc.Draw()->GetAtlas()->getImage(searchIcon);
@@ -331,7 +331,10 @@ void SearchBar::Draw(UIContext &dc) {
 		dc.Draw()->DrawImage(searchIcon, bounds_.x + leftMargin, bounds_.centerY(), 1.0f, 0xFFFFFFFF, ALIGN_VCENTER);
 		leftMargin += image->w + 10;
 	}
+	// Long searches don't spill out of a narrow bar.
+	dc.PushScissor(bounds_);
 	dc.DrawText(searchFilter_, bounds_.x + leftMargin, bounds_.centerY(), 0xFFFFFFFF, ALIGN_VCENTER);
+	dc.PopScissor();
 }
 
 SearchBar::SearchBar(UI::LayoutParams *params) : UI::InertView(params) {

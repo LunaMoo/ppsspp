@@ -95,6 +95,8 @@ protected:
 	bool confirmedTemporary_ = false;
 	bool searchChanged_ = false;
 	bool recentTabShown_ = false;
+	// In landscape, the Recent tab's search bar goes under the buttons on the right, so searching doesn't push the list down.
+	SearchBar *recentSearchBar_ = nullptr;
 	bool createdMainTabs_ = false;
 	std::string searchFilter_;
 
