@@ -384,9 +384,9 @@ static constexpr ConfigSetting generalSettings[] = {
 	ConfigSetting("DisableHTTPS", SETTING(g_Config, bDisableHTTPS), false, CfgFlag::DONT_SAVE),
 	ConfigSetting("AutoLoadSaveState", SETTING(g_Config, iAutoLoadSaveState), 0, CfgFlag::PER_GAME)
 		.Label(I18NCat::SYSTEM, "Auto load savestate").Choices(autoLoadSaveStateNames),
-	ConfigSetting("EnableCheats", SETTING(g_Config, bEnableCheats), false, CfgFlag::PER_GAME | CfgFlag::REPORT)
+	ConfigSetting("EnableCheats", SETTING(g_Config, bEnableCheats), true, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::SYSTEM, "Enable Cheats"),
-	ConfigSetting("EnablePlugins", SETTING(g_Config, bEnablePlugins), true, CfgFlag::PER_GAME | CfgFlag::REPORT)
+	ConfigSetting("EnablePlugins", SETTING(g_Config, bEnablePlugins), false, CfgFlag::PER_GAME | CfgFlag::REPORT)
 		.Label(I18NCat::SYSTEM, "Enable plugins"),
 	ConfigSetting("EnableFileHandlerPlugins", SETTING(g_Config, bEnableFileHandlerPlugins), false, CfgFlag::DEFAULT)
 		.Label(I18NCat::DEVELOPER, "Enable file handler plugins (insecure)"),

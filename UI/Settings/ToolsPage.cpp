@@ -88,10 +88,8 @@ void BuildToolsSettings(SettingsPage *page) {
 
 	const bool showRetroAchievements = System_GetPropertyInt(SYSPROP_DEVICE_TYPE) != DEVICE_TYPE_VR;
 	if (showRetroAchievements) {
-		page->Choice({ I18NCat::SYSTEM, "RetroAchievements" }).OnClick([host](UI::EventParams &) {
+		page->Choice({ I18NCat::SYSTEM, "RetroAchievements" }).OpensScreen().OnClick([host](UI::EventParams &) {
 			host->PageScreenManager()->push(new RetroAchievementsSettingsScreen(host->PageGamePath()));
-		}).Setup([](View *view) {
-			static_cast<Choice *>(view)->SetIconRight(ImageID("I_RETROACHIEVEMENTS_LOGO"));
 		});
 	}
 
