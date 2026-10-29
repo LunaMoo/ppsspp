@@ -954,7 +954,7 @@ void GameBrowser::Update() {
 void GameBrowser::Draw(UIContext &dc) {
 	using namespace UI;
 
-	if (lastScale_ != g_Config.fGameGridScale || lastViewMode_ != ViewMode()) {
+	if (lastScale_ != g_Config.fGameGridScale || lastViewMode_ != ViewMode() || lastHideRecentSettings_ != g_Config.bHideRecentTabSettings) {
 		refreshPending_ = true;
 	}
 
@@ -1026,6 +1026,7 @@ void GameBrowser::Refresh() {
 
 	lastScale_ = g_Config.fGameGridScale;
 	lastViewMode_ = ViewMode();
+	lastHideRecentSettings_ = g_Config.bHideRecentTabSettings;
 	const bool gridStyle = lastViewMode_ == GameBrowserViewMode::GRID;
 
 	// Kill all the contents
@@ -1036,11 +1037,15 @@ void GameBrowser::Refresh() {
 
 	gameList_ = nullptr;
 
-	LinearLayout *topBar = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(0, 12, 8, 0)));
-	Add(topBar);
-
 	// Recent isn't a real folder, so it gets no path or refresh.
 	const bool isRecent = path_.GetPath().ToString() == "!RECENT";
+
+	LinearLayout *topBar = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(0, 12, 8, 0)));
+	// Without its buttons, the Recent list starts right at the top.
+	const bool hideTopBar = isRecent && g_Config.bHideRecentTabSettings;
+	if (!hideTopBar) {
+		Add(topBar);
+	}
 
 	std::string pathStr = path_.GetPath().IsNetworkRoot() ? std::string(mm->T("Network")) : GetFriendlyPath(path_.GetPath(), aliasMatch_, aliasDisplay_);
 
@@ -1128,6 +1133,9 @@ void GameBrowser::Refresh() {
 	Choice *gridSettingsChoice = topBar->Add(new Choice(ImageID("I_GEAR"), new LayoutParams(64.0f, 64.0f)));
 	gridSettingsChoice->SetRoundCorners(RoundCorners::All);
 	gridSettingsChoice->OnClick.Handle(this, &GameBrowser::GridSettingsClick);
+	if (hideTopBar) {
+		delete topBar;
+	}
 
 	if (gridStyle) {
 		gameList_ = new UI::GridLayoutList(UI::GridLayoutSettings(150 * g_Config.fGameGridScale, 85 * g_Config.fGameGridScale), new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(0, 0, 6, 0)));

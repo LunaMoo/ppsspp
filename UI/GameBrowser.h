@@ -94,6 +94,7 @@ private:
 	bool listingPending_ = false;
 	bool refreshPending_ = false;
 	float lastScale_ = 1.0f;
+	bool lastHideRecentSettings_ = false;
 	GameBrowserViewMode lastViewMode_ = GameBrowserViewMode::GRID;
 	ScreenManager *screenManager_;
 	int token_ = -1;
