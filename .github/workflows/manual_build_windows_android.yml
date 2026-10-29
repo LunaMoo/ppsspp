@@ -55,18 +55,12 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3.0.0
 
-    - name: Check Valid Version Tags
-      id: valid-tags
-      shell: bash
-      run: |
-        # git describe needs tags for the version.
-        git fetch --deepen=15000 --no-recurse-submodules --tags || exit 0
-        echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT
-
     - name: Fetch upstream tags
-      if: steps.valid-tags.outputs.count == '0'
       shell: bash
       run: |
+        # The version comes from git describe. This fork's own v* tags aren't in the branch's
+        # history, so the release tags come from upstream.
+        git fetch --deepen=15000 --no-recurse-submodules || true
         git remote add upstream https://github.com/hrydgard/ppsspp.git
         git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
 
@@ -109,15 +103,10 @@ jobs:
         fetch-depth: 0
         submodules: recursive
 
-    - name: Check Valid Version Tags
-      id: valid-tags
-      shell: bash
+    - name: Fetch upstream tags
       run: |
-        echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT
-
-    - name: Fetch upstream tags # androidGitVersion needs a version tag
-      if: steps.valid-tags.outputs.count == '0'
-      run: |
+        # The version code comes from git describe, and is 0 (which fails the build) without a release
+        # tag in the branch's history. This fork's own v* tags aren't in it, so they come from upstream.
         git remote add upstream https://github.com/hrydgard/ppsspp.git
         git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
 
