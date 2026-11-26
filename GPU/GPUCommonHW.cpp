@@ -632,15 +632,13 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 		}
 	}
 
-	if (!PSP_CoreParameter().compat.flags().DisableRangeCulling && !draw_->GetBugs().Has(Draw::Bugs::BROKEN_NAN_IN_CONDITIONAL)) {
-		features |= GPU_USE_VS_RANGE_CULLING;
-	}
-
-	// Headless --disable-gpu-features, to test the fallbacks for GPUs without them (old Mali has none of
-	// clip distance, cull distance and depth clamp).
 	// Needs the same as texture sampling (textureSize, textureLod).
 	if (g_Config.iSmoothBloom > 0 && samplingAvailable) {
 		features |= GPU_USE_BLOOM_BLUR;
+	}
+
+	if (!PSP_CoreParameter().compat.flags().DisableRangeCulling && !draw_->GetBugs().Has(Draw::Bugs::BROKEN_NAN_IN_CONDITIONAL)) {
+		features |= GPU_USE_VS_RANGE_CULLING;
 	}
 
 	if (samplingChanged) {
@@ -648,6 +646,8 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 		gstate_c.useFlagsChanged = true;
 	}
 
+	// Headless --disable-gpu-features, to test the fallbacks for GPUs without them (old Mali has none of
+	// clip distance, cull distance and depth clamp).
 	features &= ~PSP_CoreParameter().disabledGPUFeatures;
 	if (!(features & GPU_USE_CLIP_DISTANCE)) {
 		// Hardware depth clamp turns off clipping at the near plane too, which the vertex shader can then only

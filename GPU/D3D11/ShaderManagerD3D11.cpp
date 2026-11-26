@@ -154,7 +154,7 @@ void ShaderManagerD3D11::PrecompileForFlags(u32 useFlags, std::string_view sampl
 	}
 	// Only when just texture sampling changes: it changes the code but not what the IDs mean. With other flags,
 	// old IDs can be ones the generators refuse.
-	const u32 codeOnlyFlags = GPU_USE_TEX_SAMPLING | GPU_USE_TEX_SAMPLING_BOUNDS;
+	const u32 codeOnlyFlags = GPU_USE_TEX_SAMPLING | GPU_USE_TEX_SAMPLING_BOUNDS | GPU_USE_BLOOM_BLUR;
 	if ((useFlags ^ shaderUseFlags_) & ~codeOnlyFlags) {
 		return;
 	}
