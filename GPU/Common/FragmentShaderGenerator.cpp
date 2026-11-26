@@ -86,8 +86,38 @@ vec4 runTextureSampling(highp vec2 uv, highp vec2 size, highp vec2 scale, highp 
 }
 )";
 
-// On Vulkan, framebuffer textures are arrays (layer 0, or the eye in stereo).
-static void WriteTextureSamplingFunctions(ShaderWriter &p, const ShaderLanguageDesc &compat, bool arrayTexture, bool useStereo, std::string_view source) {
+// The bloom blur (GPU_USE_BLOOM_BLUR): a Gaussian-weighted disc of bilinear reads, so wide that the effect buffer's
+// texels can't be made out. The reads lie on a sunflower spiral (each one a golden angle on from the last), rotated
+// per screen pixel by fixed noise, which turns what would be rings into fine grain. The weights sum to one, so the
+// glow spreads out without getting brighter or darker. radius is in texels.
+static const char * const bloomBlurFunction = R"(
+vec4 bloomBlur(highp vec2 uv, highp vec2 size, highp vec2 scale, highp vec4 bounds, float radius) {
+	highp vec2 lo = vec2(0.5, 0.5) / size;
+	highp vec2 hi = vec2(1.0, 1.0) - lo;
+	if (bounds.x <= bounds.z && bounds.y <= bounds.w) {
+		lo = max(lo, (floor(bounds.xy * size + vec2(0.5, 0.5)) + vec2(0.5, 0.5)) / size);
+		hi = max(min(hi, (floor(bounds.zw * size + vec2(0.5, 0.5)) - vec2(0.5, 0.5)) / size), lo);
+	}
+	highp vec2 pixel = floor(uv * size * scale);
+	float noise = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+	float angle = noise * 6.2831853;
+	vec2 dir = vec2(cos(angle), sin(angle));
+	vec4 sum = vec4(0.0, 0.0, 0.0, 0.0);
+	float weights = 0.0;
+	for (int i = 0; i < 40; i++) {
+		float r = sqrt((float(i) + 0.5) / 40.0);
+		float w = exp(-2.5 * r * r);
+		sum += SAMPLING_TEX(clamp(uv + dir * (r * radius) / size, lo, hi)) * w;
+		weights += w;
+		dir = vec2(dir.x * -0.7373688 - dir.y * 0.6754903, dir.x * 0.6754903 + dir.y * -0.7373688);
+	}
+	return sum / weights;
+}
+)";
+
+// Texture reads at a given coordinate, at level 0 (explicit, since it's in branches) and the texture's size. On
+// Vulkan, framebuffer textures are arrays (layer 0, or the eye in stereo).
+static void WriteSamplingTextureAccess(ShaderWriter &p, const ShaderLanguageDesc &compat, bool arrayTexture, bool useStereo) {
 	if (compat.shaderLanguage == HLSL_D3D11) {
 		p.C("#define SAMPLING_TEX(c) tex.SampleLevel(texSamp, c, 0.0)\n");
 		p.C("#define STATIC static\n");
@@ -101,13 +131,22 @@ static void WriteTextureSamplingFunctions(ShaderWriter &p, const ShaderLanguageD
 		p.C("#define STATIC\n");
 		p.C("highp vec2 samplingTexSize() { return vec2(textureSize(tex, 0)); }\n");
 	}
-	// Edge detection sums overflow lowp. The default goes back to lowp for main (useSampling excludes the CLUT8
-	// path, the only one that raises it).
+}
+
+static void WriteTextureSamplingFunctions(ShaderWriter &p, const ShaderLanguageDesc &compat, bool arrayTexture, bool useStereo, bool useSampling, std::string_view source, bool useBloom) {
+	WriteSamplingTextureAccess(p, compat, arrayTexture, useStereo);
+	// Edge detection sums overflow lowp. The default goes back to lowp for main (sampling and the bloom blur exclude
+	// the CLUT8 path, the only one that raises it).
 	p.HighPrecisionFloat();
-	p.W(samplingPrelude);
-	p.W(source);
-	p.C("\n");
-	p.W(samplingEpilogue);
+	if (useSampling) {
+		p.W(samplingPrelude);
+		p.W(source);
+		p.C("\n");
+		p.W(samplingEpilogue);
+	}
+	if (useBloom) {
+		p.W(bloomBlurFunction);
+	}
 	p.LowPrecisionFloat();
 }
 
@@ -267,6 +306,7 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 	// Needs textureSize, textureLod and fwidth, which glslES30 implies (GLSL 3xx, Vulkan, D3D11).
 	const std::string &samplingSource = GetTextureSamplingShaderSource();
 	const bool useSampling = doTexture && !isModeClear && gstate_c.Use(GPU_USE_TEX_SAMPLING) && !samplingSource.empty() && compat.glslES30 && !texture3D && shaderDepalMode == ShaderDepalMode::OFF;
+	const bool useBloom = doTexture && !isModeClear && gstate_c.Use(GPU_USE_BLOOM_BLUR) && compat.glslES30 && !texture3D && shaderDepalMode == ShaderDepalMode::OFF;
 	// Declared whenever the vertex shader writes it, so the D3D11 structs match.
 	const bool samplingBounds = gstate_c.Use(GPU_USE_TEX_SAMPLING_BOUNDS) && compat.glslES30;
 
@@ -425,7 +465,7 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 			}
 			*uniformMask |= DIRTY_TEX_ALPHA_MUL;
 			WRITE(p, "uniform vec2 u_texNoAlphaMul;\n");
-			if (useSampling) {
+			if (useSampling || useBloom) {
 				WRITE(p, "uniform float u_texNoSampling;\n");
 			}
 		}
@@ -603,8 +643,8 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 		WRITE(p, "float mymod(float a, float b) { return a - b * floor(a / b); }\n");
 	}
 
-	if (useSampling) {
-		WriteTextureSamplingFunctions(p, compat, arrayTexture, useStereo, samplingSource);
+	if (useSampling || useBloom) {
+		WriteTextureSamplingFunctions(p, compat, arrayTexture, useStereo, useSampling, samplingSource, useBloom);
 	}
 
 	if (compat.shaderLanguage == HLSL_D3D11) {
@@ -649,7 +689,7 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 		if (fsMinmaxDiscard || fsDepthClamp) {
 			WRITE(p, "  vec2 v_zw = In.v_zw;\n");
 		}
-		if (samplingBounds && useSampling) {
+		if (samplingBounds && (useSampling || useBloom)) {
 			WRITE(p, "  vec4 v_texbounds = In.v_texbounds;\n");
 		}
 	}
@@ -784,19 +824,30 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 						}
 					}
 				}
-				if (useSampling) {
-					// Only where a texel covers more than a pixel (fully from two). fwidth stays outside the branch.
+				if (useSampling || useBloom) {
+					// fwidth stays outside the branches.
 					const char *uv = doTextureProjection ? "samplingProjUV" : texcoord;
+					const char *bounds = samplingBounds ? "v_texbounds" : "vec4(1.0, 1.0, 0.0, 0.0)";
 					if (doTextureProjection) {
 						WRITE(p, "  highp vec2 samplingProjUV = %s.xy / %s.z;\n", texcoord, texcoord);
 					}
 					WRITE(p, "  highp vec2 samplingSize = samplingTexSize();\n");
 					WRITE(p, "  highp vec2 samplingScale = 1.0 / max(fwidth(%s.xy * samplingSize), vec2(0.000001, 0.000001));\n", uv);
-					// u_texNoSampling is 1 for textures from a replacement pack (see TextureSamplingMode).
-					WRITE(p, "  float samplingAmount = smoothstep(1.0, 2.0, min(samplingScale.x, samplingScale.y)) * step(u_texNoSampling, 0.75);\n");
-					WRITE(p, "  if (samplingAmount > 0.0) {\n");
-					WRITE(p, "    t = mix(t, runTextureSampling(%s.xy, samplingSize, samplingScale, %s), samplingAmount);\n", uv, samplingBounds ? "v_texbounds" : "vec4(1.0, 1.0, 0.0, 0.0)");
-					WRITE(p, "  }\n");
+					// u_texNoSampling: see TextureSamplingMode.
+					if (useSampling) {
+						// Only where a texel covers more than a pixel (fully from two).
+						WRITE(p, "  float samplingAmount = smoothstep(1.0, 2.0, min(samplingScale.x, samplingScale.y)) * step(u_texNoSampling, 0.75);\n");
+						WRITE(p, "  if (samplingAmount > 0.0) {\n");
+						WRITE(p, "    t = mix(t, runTextureSampling(%s.xy, samplingSize, samplingScale, %s), samplingAmount);\n", uv, bounds);
+						WRITE(p, "  }\n");
+					}
+					if (useBloom) {
+						// A bloom composite: the effect buffer is stretched over the screen, so this is where it looks blocky.
+						WRITE(p, "  float bloomAmount = smoothstep(1.0, 1.5, max(samplingScale.x, samplingScale.y)) * step(1.5, u_texNoSampling);\n");
+						WRITE(p, "  if (bloomAmount > 0.0) {\n");
+						WRITE(p, "    t = mix(t, bloomBlur(%s.xy, samplingSize, samplingScale, %s, u_texNoSampling - 2.0), bloomAmount);\n", uv, bounds);
+						WRITE(p, "  }\n");
+					}
 				}
 				if (id.Bit(FS_BIT_TRUNCATE_BILINEAR)) {
 					// The PSP's bilinear filter weighs the texels in 1/16ths and truncates each lerp to 8 bits (see SampleLinear

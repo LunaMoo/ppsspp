@@ -343,6 +343,8 @@ void BuildGraphicsSettings(SettingsPage *page) {
 
 	page->Header();
 	page->Setting(&g_Config.iBloomHack).Disabled(&g_Config.bSoftwareRendering).Hint({I18NCat::GRAPHICS, "ReducesBloomArtifactsHint", "Reduces artifacts in visual effects like blooms at higher resolutions."});
+	page->Setting(&g_Config.iSmoothBloom).Disabled(&g_Config.bSoftwareRendering)
+		.Hint({ I18NCat::GRAPHICS, "Smooth bloom Tip", "Blurs glow effects drawn from a small buffer (see the setting above), so they look soft instead of blocky. Higher is softer." });
 
 	page->Header("Latency");
 
@@ -378,6 +380,8 @@ void BuildGraphicsSettings(SettingsPage *page) {
 		.Hint({ I18NCat::GRAPHICS, "Texture sampling Tip", "Smooths pixel edges while drawing, at any size and with no extra memory, so they stay stable when sprites move or scale. Usually better than upscaling for 2D games, but costs GPU time on every pixel. Replaces upscaling while on." });
 	page->Setting(&g_Config.bTexSamplingSeparateSprites).EnabledFunc(&TextureSamplingOn)
 		.Hint({ I18NCat::GRAPHICS, "Keep sampled sprites separate Tip", "Stops sprites cut from a shared texture from blending into their neighbours. Fixes edge artifacts on HUDs and sprites in some 2D games." });
+	page->Setting(&g_Config.bTexSamplingKeepEffectsSoft).EnabledFunc(&TextureSamplingOn)
+		.Hint({ I18NCat::GRAPHICS, "Keep effects soft Tip", "Glow and blur effects are still drawn, just not sharpened. Sharpening them makes them look blocky." });
 
 	if (GetGPUBackend() == GPUBackend::VULKAN || GetGPUBackend() == GPUBackend::METAL) {
 		page->Custom("GPU texture upscaler (fast)", [host](UI::ViewGroup *parent) -> UI::View * {

@@ -423,6 +423,13 @@ public:
 		return displayFormat_;
 	}
 
+	// The "Lower resolution for effects" size rule: whether a framebuffer this size is an effect buffer (bloom and the
+	// like) at the given level (1 safe, 2 balanced, 3 aggressive).
+	static bool IsEffectSizedFramebuffer(int width, int height, int level);
+	// Whether texture sampling should treat this framebuffer as an effect buffer. Uses the "Lower resolution for
+	// effects" level, or balanced when that's off.
+	bool IsEffectFramebuffer(const VirtualFramebuffer *vfb) const;
+
 	bool UseBufferedRendering() const {
 		return useBufferedRendering_;
 	}

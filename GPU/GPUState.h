@@ -481,7 +481,8 @@ enum : u32 {
 	GPU_USE_CLEAR_RAM_HACK = FLAG_BIT(9),
 	GPU_USE_TEX_SAMPLING = FLAG_BIT(10),  // Textures are read through a texture sampling shader (GetTextureSamplingShaderSource).
 	GPU_USE_TEX_SAMPLING_BOUNDS = FLAG_BIT(11),  // Texture sampling stays inside each through-mode triangle's texture bounds (v_texbounds).
-	// Free bit: 12
+	GPU_USE_BLOOM_BLUR = FLAG_BIT(12),  // Bloom composites (effect buffers drawn additively) get a wide blur (TextureSamplingMode).
+	// Free bits: none
 	GPU_USE_16BIT_FORMATS = FLAG_BIT(13),
 	GPU_USE_DEPTH_CLAMP = FLAG_BIT(14),
 	GPU_USE_SAMPLER_LOD_CONTROL = FLAG_BIT(15),
@@ -577,6 +578,14 @@ struct GPUStateCache {
 			Dirty(DIRTY_FRAGMENTSHADER_STATE | (is3D ? DIRTY_MIPBIAS : 0));
 		}
 	}
+	// renderScale: the framebuffer's texels per PSP pixel, for the bloom blur radius.
+	void SetTextureEffectBuffer(bool effect, int renderScale) {
+		if (effect != textureEffectBuffer || renderScale != textureEffectScale) {
+			textureEffectBuffer = effect;
+			textureEffectScale = renderScale;
+			Dirty(DIRTY_TEX_ALPHA_MUL);  // Carries u_texNoSampling (TextureSamplingMode).
+		}
+	}
 	void SetTextureReplaced(bool replaced) {
 		if (replaced != textureReplaced) {
 			textureReplaced = replaced;
@@ -655,6 +664,10 @@ public:
 	bool truncateBilinear;
 	// The bound texture comes from a replacement pack, so texture sampling leaves it alone.
 	bool textureReplaced;
+	// The bound texture is a framebuffer the "Lower resolution for effects" size rule calls an effect buffer (see
+	// FramebufferManagerCommon::IsEffectFramebuffer), with that framebuffer's render scale.
+	bool textureEffectBuffer;
+	int textureEffectScale;
 
 	// Cached 4x4 products of the matrices.
 	// Useful for culling and extracing the final Z from vertices (so we can check if clipping is needed).

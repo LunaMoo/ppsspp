@@ -94,9 +94,28 @@ static bool FragmentAlphaMatters() {
 	return aUsesSrcAlpha || bUsesSrcAlpha;
 }
 
+// A bloom composite: an effect buffer added onto the screen, with a fixed white destination factor (plain add) or
+// one minus the source color (screen blending).
+static bool IsBloomComposite() {
+	if (!gstate.isAlphaBlendEnabled() || gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_ADD) {
+		return false;
+	}
+	const GEBlendDstFactor b = gstate.getBlendFuncB();
+	return (b == GE_DSTBLEND_FIXB && gstate.getFixB() == 0xFFFFFF) || b == GE_DSTBLEND_INVSRCCOLOR;
+}
+
 float TextureSamplingMode() {
 	if (gstate_c.textureReplaced) {
 		return 1.0f;
+	}
+	if (gstate_c.textureEffectBuffer) {
+		if (gstate_c.Use(GPU_USE_BLOOM_BLUR) && IsBloomComposite()) {
+			// Half a PSP pixel of radius per step, in the framebuffer's texels.
+			return 2.0f + (float)g_Config.iSmoothBloom * 0.5f * (float)gstate_c.textureEffectScale;
+		}
+		if (g_Config.bTexSamplingKeepEffectsSoft) {
+			return 1.0f;
+		}
 	}
 	// Where texture alpha can't change the picture, sampling keeps the colors as if it were 1: videos have alpha 0,
 	// and draw with blending that doesn't read it.

@@ -553,6 +553,7 @@ TextureApplyResult TextureCacheCommon::ApplyTexture(bool doBind) {
 		gstate_c.SetTextureIsVideo(false);
 		gstate_c.SetTextureIs3D(false);
 		gstate_c.SetTextureReplaced(false);
+		gstate_c.SetTextureEffectBuffer(false, 1);
 		gstate_c.SetTextureIsArray(false);
 		gstate_c.SetTextureIsFramebuffer(false);
 		gstate_c.SetShaderDepal(ShaderDepalMode::OFF);
@@ -893,6 +894,7 @@ TextureApplyResult TextureCacheCommon::ApplyTexture(bool doBind) {
 		gstate_c.SetTextureIsVideo(false);
 		gstate_c.SetTextureIs3D(false);
 		gstate_c.SetTextureReplaced(false);
+		gstate_c.SetTextureEffectBuffer(false, 1);
 		gstate_c.SetTextureIsArray(framebuffer != nullptr);
 		gstate_c.SetShaderDepal(ShaderDepalMode::OFF);
 
@@ -903,6 +905,7 @@ TextureApplyResult TextureCacheCommon::ApplyTexture(bool doBind) {
 			if (doBind) {
 				ApplyTextureFramebuffer(framebuffer, gstate.getTextureFormat(), channel);
 			}
+			gstate_c.SetTextureEffectBuffer(channel == RASTER_COLOR && framebufferManager_->IsEffectFramebuffer(framebuffer), framebuffer->renderScaleFactor);
 			result.framebuffer = framebuffer;
 			result.framebufferTextureChannel = channel;
 		} else {
@@ -1011,6 +1014,7 @@ TextureApplyResult TextureCacheCommon::ApplyTextureFinish(TexCacheEntry *entry, 
 		gstate_c.SetTextureSolidAlpha(false);
 		gstate_c.SetTextureIs3D(false);
 		gstate_c.SetTextureReplaced(false);
+		gstate_c.SetTextureEffectBuffer(false, 1);
 		return TextureApplyResult{};
 	} else {
 		if (doBind) {
@@ -1019,6 +1023,7 @@ TextureApplyResult TextureCacheCommon::ApplyTextureFinish(TexCacheEntry *entry, 
 		gstate_c.SetTextureSolidAlpha((entry->status & TexStatus::ALPHA_SOLID) != 0);
 		gstate_c.SetTextureIs3D((entry->status & TexStatus::IS_3D) != 0);
 		gstate_c.SetTextureReplaced(entry->replacedTexture && entry->replacedTexture->State() == ReplacementState::ACTIVE);
+		gstate_c.SetTextureEffectBuffer(false, 1);
 		if (entry->status & TexStatus::CLUT8_INDEXED) {
 			bool smoothedDepal = false;
 			u32 depthUpperBits = 0;

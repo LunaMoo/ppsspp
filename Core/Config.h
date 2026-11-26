@@ -437,6 +437,8 @@ public:
 	// Texture sampling shader (Type=Sampling, "Off" for none), and whether it stays inside each 2D sprite.
 	std::string sTextureSamplingShader;
 	bool bTexSamplingSeparateSprites;
+	bool bTexSamplingKeepEffectsSoft;  // No texture sampling on effect buffers (by the BloomHack size rule). Still drawn.
+	int iSmoothBloom;  // 0 = off, else the bloom blur strength.
 	bool bGfxDebugOutput;
 	int iInflightFrames;
 	bool bRenderDuplicateFrames;

@@ -567,7 +567,7 @@ bool TestShaderGenerators() {
 	}
 
 	// Again with each built-in texture sampling shader, without and with the per-sprite bounds (which add a
-	// varying). They're read from assets/shaders, looked for from the usual working directories.
+	// varying) and the bloom blur. They're read from assets/shaders, looked for from the usual working directories.
 	const char *const samplingFiles[] = { "tex_sample_xbrz.fsh", "tex_sample_xbr.fsh", "tex_sample_omniscale.fsh", "tex_sample_sharp_bilinear.fsh" };
 	const Path shaderDirs[] = { Path("assets/shaders"), Path("../assets/shaders"), File::GetExeDirectory() / "assets/shaders", File::GetExeDirectory() / "../../../assets/shaders" };
 	bool samplingResult = true;
@@ -585,10 +585,13 @@ bool TestShaderGenerators() {
 		SetTextureSamplingShaderSource(source);
 		gstate_c.SetUseFlags(oldFlags | GPU_USE_TEX_SAMPLING);
 		samplingResult = samplingResult && TestFragmentShaders();
-		gstate_c.SetUseFlags(oldFlags | GPU_USE_TEX_SAMPLING | GPU_USE_TEX_SAMPLING_BOUNDS);
+		gstate_c.SetUseFlags(oldFlags | GPU_USE_TEX_SAMPLING | GPU_USE_TEX_SAMPLING_BOUNDS | GPU_USE_BLOOM_BLUR);
 		samplingResult = samplingResult && TestFragmentShaders() && TestVertexShaders(false);
 	}
 	SetTextureSamplingShaderSource("");
+	// The bloom blur alone (Smooth bloom without texture sampling).
+	gstate_c.SetUseFlags(oldFlags | GPU_USE_BLOOM_BLUR);
+	samplingResult = samplingResult && TestFragmentShaders();
 	gstate_c.SetUseFlags(oldFlags);
 	if (!samplingResult) {
 		return false;

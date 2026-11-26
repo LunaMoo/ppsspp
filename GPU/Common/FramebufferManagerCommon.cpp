@@ -80,6 +80,26 @@ void FramebufferManagerCommon::Init(int msaaLevel) {
 	NotifyRenderResized(displayLayoutConfigCopy_, msaaLevel);
 }
 
+bool FramebufferManagerCommon::IsEffectSizedFramebuffer(int width, int height, int level) {
+	switch (level) {
+	case 1:
+		return width <= 128 || height <= 64;
+	case 2:
+		return width <= 256 || height <= 128;
+	case 3:
+		return width < 480 || width > 800 || height < 272; // GOW uses 864x272
+	default:
+		return false;
+	}
+}
+
+bool FramebufferManagerCommon::IsEffectFramebuffer(const VirtualFramebuffer *vfb) const {
+	if (!vfb || (vfb->usageFlags & FB_USAGE_COLOR_MIXED_DEPTH)) {
+		return false;
+	}
+	return IsEffectSizedFramebuffer(vfb->bufferWidth, vfb->bufferHeight, bloomHack_ != 0 ? bloomHack_ : 2);
+}
+
 // Returns true if we need to stop the render thread
 bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 	const bool newRender = renderWidth_ != (float)PSP_CoreParameter().renderWidth || renderHeight_ != (float)PSP_CoreParameter().renderHeight || msaaLevel_ != msaaLevel;
@@ -2037,18 +2057,7 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 		vfb->bufferHeight = std::max((int)vfb->bufferHeight, h);
 	}
 
-	bool force1x = false;
-	switch (bloomHack_) {
-	case 1:
-		force1x = vfb->bufferWidth <= 128 || vfb->bufferHeight <= 64;
-		break;
-	case 2:
-		force1x = vfb->bufferWidth <= 256 || vfb->bufferHeight <= 128;
-		break;
-	case 3:
-		force1x = vfb->bufferWidth < 480 || vfb->bufferWidth > 800 || vfb->bufferHeight < 272; // GOW uses 864x272
-		break;
-	}
+	bool force1x = IsEffectSizedFramebuffer(vfb->bufferWidth, vfb->bufferHeight, bloomHack_);
 
 	if ((vfb->usageFlags & FB_USAGE_COLOR_MIXED_DEPTH) && !PSP_CoreParameter().compat.flags().ForceLowerResolutionForEffectsOn) {
 		force1x = false;

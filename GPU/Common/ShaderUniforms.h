@@ -136,7 +136,8 @@ void DirtyDepalForDraw(bool pixelMapped);
 void UpdateFogCoef(const GEState &state, float fogCoef[2]);
 
 // u_texNoSampling: 0 = texture sampling with texture alpha, 0.5 = sampling with alpha as 1 (it can't change the
-// picture: no alpha test, and no blending that reads source alpha), 1 = no sampling (a replacement pack texture).
+// picture: no alpha test, and no blending that reads source alpha), 1 = no sampling (a replacement pack texture, or
+// an effect buffer with "Keep effects soft"), 2 + r = bloom blur of radius r texels instead (GPU_USE_BLOOM_BLUR).
 float TextureSamplingMode();
 
 // Computes u_texclamp and u_texclampoff. Only meaningful when gstate_c.needShaderTexClamp is set.
