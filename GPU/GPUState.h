@@ -859,6 +859,14 @@ inline bool EffectOpacityOverridesFix() {
 	return gstate_c.effectOpacityActive && gstate.isTextureMapEnabled() && gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_ADD &&
 		gstate.getBlendFuncA() == GE_SRCBLEND_FIXA && gstate.getBlendFuncB() == GE_DSTBLEND_FIXB;
 }
+// Where the effect's own term is faded some other way (its color or alpha scaled by t, see
+// FramebufferManagerCommon::GetEffectOpacityMode), a fixed B still gets B * t + (1 - t), or a draw that
+// multiplies the scene by the effect (DBZ Tenkaichi Tag Team's outlines, dst * src + dst * 0) would darken it
+// all towards black instead of fading the effect out.
+inline bool EffectOpacityFadesFixB() {
+	return gstate_c.effectOpacityActive && gstate.isTextureMapEnabled() && gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_ADD &&
+		gstate.getBlendFuncB() == GE_DSTBLEND_FIXB;
+}
 inline u32 FadeFixColor(u32 color, float t, bool towardOne) {
 	u32 result = 0;
 	for (int shift = 0; shift < 24; shift += 8) {
@@ -871,5 +879,5 @@ inline u32 GetBlendFixA() {
 	return EffectOpacityOverridesFix() ? FadeFixColor(gstate.getFixA(), gstate_c.effectOpacity, false) : gstate.getFixA();
 }
 inline u32 GetBlendFixB() {
-	return EffectOpacityOverridesFix() ? FadeFixColor(gstate.getFixB(), gstate_c.effectOpacity, true) : gstate.getFixB();
+	return EffectOpacityFadesFixB() ? FadeFixColor(gstate.getFixB(), gstate_c.effectOpacity, true) : gstate.getFixB();
 }

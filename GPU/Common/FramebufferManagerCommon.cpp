@@ -1104,6 +1104,8 @@ void FramebufferManagerCommon::DestroyFramebuf(VirtualFramebuffer *v) {
 		currentRenderVfb_ = nullptr;
 	if (effectSourceVfb_ == v)
 		effectSourceVfb_ = nullptr;
+	if (filterSourceVfb_ == v)
+		filterSourceVfb_ = nullptr;
 	if (displayFramebuf_ == v)
 		displayFramebuf_ = nullptr;
 	if (prevDisplayFramebuf_ == v)
@@ -1610,8 +1612,14 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		return true;
 	} else if (framebuffer != currentRenderVfb_ || (flags & BINDFBCOLOR_FORCE_SELF) != 0) {
 		Draw::Framebuffer *fbo = framebuffer->fbo;
-		if ((flags & BINDFBCOLOR_EFFECT_SOURCE) && framebuffer != currentRenderVfb_) {
-			fbo = SmoothEffectComposite(framebuffer);
+		if (framebuffer != currentRenderVfb_) {
+			// At most one of these applies: one draws from an effect buffer at 1x, the other into one.
+			if (flags & BINDFBCOLOR_EFFECT_SOURCE) {
+				fbo = SmoothEffectComposite(framebuffer);
+			}
+			if (fbo == framebuffer->fbo) {
+				fbo = FilterSourceAt1x(framebuffer);
+			}
 		}
 		draw_->BindFramebufferAsTexture(fbo, stage, Draw::Aspect::COLOR_BIT, layer);
 		return true;
@@ -2444,6 +2452,36 @@ Draw::Framebuffer *FramebufferManagerCommon::ResampleEffectSource(Draw::Framebuf
 	return from;
 }
 
+// A filter (EFFECT_SIGNAL_FILTERED) compares or mixes texels a pixel or less apart, with the game's bilinear
+// filtering. Rendered at 1x from a framebuffer at a higher scale, that filtering would only reach a fraction of a
+// PSP pixel, so the outline DBZ Tenkaichi Tag Team finds that way came out in dashes. It reads a copy at 1x
+// instead, made with nearest filtering like the PSP's own pixels.
+Draw::Framebuffer *FramebufferManagerCommon::FilterSourceAt1x(VirtualFramebuffer *src) {
+	const VirtualFramebuffer *dst = currentRenderVfb_;
+	if (!dst || !src->fbo || src->renderScaleFactor <= 1 || dst->renderScaleFactor != 1 || !IsEffectBuffer(dst)) {
+		return src->fbo;
+	}
+	auto it = effectBuffers_.find(EffectKey(dst));
+	if (it == effectBuffers_.end() || (it->second.signals & EFFECT_SIGNAL_FILTERED) == 0) {
+		return src->fbo;
+	}
+	if (filterSourceVfb_ == src && filterSourceBindSeq_ == src->colorBindSeq && filterSourceFrame_ == gpuStats.totals.numFlips) {
+		return filterSourceCopy_;
+	}
+	Draw::Framebuffer *copy = GetTempFBO(TempFBO::EFFECT_FILTER_SOURCE, src->bufferWidth, src->bufferHeight);
+	Draw2DPipeline *pipeline = Get2DPipeline(DRAW2D_COPY_COLOR);
+	if (!copy || !pipeline) {
+		return src->fbo;
+	}
+	BlitUsingRaster(src->fbo, 0.0f, 0.0f, (float)src->renderWidth, (float)src->renderHeight, copy, 0.0f, 0.0f, (float)src->bufferWidth, (float)src->bufferHeight, false, 1, pipeline, "FilterSourceAt1x");
+	RebindFramebuffer("After FilterSourceAt1x");
+	filterSourceVfb_ = src;
+	filterSourceCopy_ = copy;
+	filterSourceBindSeq_ = src->colorBindSeq;
+	filterSourceFrame_ = gpuStats.totals.numFlips;
+	return copy;
+}
+
 // Auto (smooth): the effect buffer is at 1x as in Auto, so what it holds matches the PSP. But the draw that
 // stretches it over the full resolution scene does so with plain bilinear filtering (or nearest), which shows
 // every 1x texel as a block or diamond. That draw gets a copy scaled up smoothly instead (SmoothEffectTexture).
@@ -2461,7 +2499,7 @@ Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectComposite(VirtualFrameb
 		return src->fbo;
 	}
 	const bool masked = EffectCompositeIsMasked();
-	const int param = (g_Config.iEffectsSpread << 13) | (g_Config.iEffectsOpacity << 3) | ((int)masked << 2) | (int)GetEffectOpacityMode();
+	const int param = (g_Config.iEffectsSpread << 14) | (g_Config.iEffectsOpacity << 4) | ((int)EffectCompositeDarkens() << 3) | ((int)masked << 2) | (int)GetEffectOpacityMode();
 	if (effectSourceVfb_ == src && effectSourceBindSeq_ == src->colorBindSeq && effectSourceFrame_ == gpuStats.totals.numFlips && effectSourceParam_ == param) {
 		return effectSourceCopy_;
 	}
@@ -2486,6 +2524,16 @@ bool FramebufferManagerCommon::EffectCompositeIsMasked() {
 	return gstate.isStencilTestEnabled() && gstate.getStencilTestFunction() != GE_COMP_ALWAYS;
 }
 
+bool FramebufferManagerCommon::EffectCompositeDarkens() {
+	if (!gstate.isAlphaBlendEnabled() || gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_ADD) {
+		return false;
+	}
+	const GEBlendSrcFactor funcA = gstate.getBlendFuncA();
+	const GEBlendDstFactor funcB = gstate.getBlendFuncB();
+	return (funcA == GE_SRCBLEND_DSTCOLOR && funcB == GE_DSTBLEND_FIXB && gstate.getFixB() == 0) ||
+		(funcA == GE_SRCBLEND_FIXA && gstate.getFixA() == 0 && funcB == GE_DSTBLEND_SRCCOLOR);
+}
+
 Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectTexture(Draw::Framebuffer *from, int w, int h, bool masked) {
 	const VirtualFramebuffer *dst = currentRenderVfb_;
 	if (!dst) {
@@ -2505,6 +2553,10 @@ Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectTexture(Draw::Framebuff
 	// An effect the game limits to part of the scene with a stencil test isn't spread past that, and only gets
 	// the first layer: God of War draws a shrunk copy of the scene over the background for a soft focus, which
 	// the wider layers smeared.
+	// One that multiplies the scene, dark lines like DBZ Tenkaichi Tag Team's outlines, isn't light to spread
+	// either: the wider layers turned them into a faint grey haze. It gets the first layer with a lighter blur,
+	// then the darker of it and copies a quarter of a pixel (at 1x) to each side, so the lines stay as dark and
+	// solid as the PSP draws them, only without its steps.
 	// mix is 0.46 at 25%, 0.65 at 100%, 0.85 from 180%.
 	const float mix = std::min(0.4f + 0.25f * spread, 0.85f);
 	const int alpha = (int)(mix * 256.0f + 0.5f);
@@ -2512,7 +2564,8 @@ Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectTexture(Draw::Framebuff
 	Draw2DPipeline *minPipeline = Get2DPipeline(DRAW2D_COPY_COLOR_MIN);
 	Draw2DPipeline *copyPipeline = Get2DPipeline(DRAW2D_COPY_COLOR);
 	const int MAX_LEVELS = 4;
-	const int LEVELS = masked ? 1 : MAX_LEVELS;
+	const bool darkens = EffectCompositeDarkens();
+	const int LEVELS = masked || darkens ? 1 : MAX_LEVELS;
 	const float OUTWARD = 0.35f;
 	int levelW[MAX_LEVELS];
 	int levelH[MAX_LEVELS];
@@ -2522,7 +2575,7 @@ Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectTexture(Draw::Framebuff
 		levelH[i] = i == 0 ? h * 2 : std::max(4, h >> (i - 1));
 		Draw::Framebuffer *scaled = ResampleEffectSource(from, w, h, levelW[i], levelH[i]);
 		// Nine taps cover up to about 4.5 texels smoothly.
-		levels[i] = scaled ? BlurEffectSource(scaled, levelW[i], levelH[i], 1.5f * std::max(spread, 0.75f)) : nullptr;
+		levels[i] = scaled ? BlurEffectSource(scaled, levelW[i], levelH[i], darkens ? 0.75f : 1.5f * std::max(spread, 0.75f)) : nullptr;
 		if (!levels[i]) {
 			break;
 		}
@@ -2557,6 +2610,23 @@ Draw::Framebuffer *FramebufferManagerCommon::SmoothEffectTexture(Draw::Framebuff
 			BlitUsingRaster(up, 0.0f, 0.0f, (float)upW, (float)upH, levels[i - 1], 0.0f, 0.0f, (float)toW, (float)toH, true, alpha, blendPipeline, "SmoothEffectComposite_Blend");
 		}
 		result = ResampleEffectSource(levels[0], levelW[0], levelH[0], w * scale, h * scale);
+	}
+	if (result && darkens && minPipeline) {
+		const int fullW = w * scale;
+		const int fullH = h * scale;
+		Draw::Framebuffer *dilated = GetTempFBO(TempFBO::EFFECT_SOURCE_3, fullW, fullH);
+		if (dilated == result) {
+			dilated = GetTempFBO(TempFBO::EFFECT_SOURCE_2, fullW, fullH);
+		}
+		if (dilated) {
+			const float d = 0.25f * scale;
+			BlitUsingRaster(result, 0.0f, 0.0f, (float)fullW, (float)fullH, dilated, 0.0f, 0.0f, (float)fullW, (float)fullH, false, 1, copyPipeline, "SmoothEffectComposite_Dark");
+			const float offsets[4][2] = { { d, 0.0f }, { -d, 0.0f }, { 0.0f, d }, { 0.0f, -d } };
+			for (const auto &o : offsets) {
+				BlitUsingRaster(result, 0.0f, 0.0f, (float)fullW, (float)fullH, dilated, o[0], o[1], fullW + o[0], fullH + o[1], true, 1, minPipeline, "SmoothEffectComposite_DarkMin");
+			}
+			result = dilated;
+		}
 	}
 
 	// Effects opacity, where the draw's blend can't do it with its fixed colors (see GetBlendFixA). The blur
@@ -3819,6 +3889,8 @@ void FramebufferManagerCommon::DestroyAllFBOs() {
 	SetEffect16Bit(nullptr);
 	effectSourceVfb_ = nullptr;
 	effectSourceCopy_ = nullptr;
+	filterSourceVfb_ = nullptr;
+	filterSourceCopy_ = nullptr;
 	// Or a new framebuffer at the same address would skip its depth shift.
 	depthShiftedFor_ = 0;
 	lastRenderAddress_ = 0;

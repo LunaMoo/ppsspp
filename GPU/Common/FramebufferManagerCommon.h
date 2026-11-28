@@ -277,6 +277,8 @@ enum class TempFBO {
 	// The two passes of its blur.
 	EFFECT_SOURCE_2,
 	EFFECT_SOURCE_3,
+	// A framebuffer at 1x for a filter effect to read (see FilterSourceAt1x).
+	EFFECT_FILTER_SOURCE,
 };
 
 inline Draw::DataFormat GEFormatToThin3D(GEBufferFormat geFormat) {
@@ -448,6 +450,8 @@ public:
 	Draw::Framebuffer *SmoothEffectTexture(Draw::Framebuffer *from, int w, int h, bool masked);
 	// The current draw is limited to part of the scene by a stencil test (see SmoothEffectTexture).
 	static bool EffectCompositeIsMasked();
+	// The current draw multiplies the scene by the effect, so it's dark lines or shading (see SmoothEffectTexture).
+	static bool EffectCompositeDarkens();
 	bool TracksEffectBuffers() const {
 		return bloomHack_ >= BLOOMHACK_AUTO && renderScaleFactor_ != 1 && useBufferedRendering_;
 	}
@@ -843,6 +847,11 @@ protected:
 	Draw::Framebuffer *ResampleEffectSource(Draw::Framebuffer *from, int fromW, int fromH, int w, int h);
 	Draw::Framebuffer *BlurEffectSource(Draw::Framebuffer *from, int w, int h, float sigma);
 	Draw::Framebuffer *SmoothEffectComposite(VirtualFramebuffer *src);
+	Draw::Framebuffer *FilterSourceAt1x(VirtualFramebuffer *src);
+	const VirtualFramebuffer *filterSourceVfb_ = nullptr;
+	Draw::Framebuffer *filterSourceCopy_ = nullptr;
+	int filterSourceBindSeq_ = -1;
+	int filterSourceFrame_ = -1;
 	enum class EffectOpacityMode {
 		COLOR,
 		ALPHA,
