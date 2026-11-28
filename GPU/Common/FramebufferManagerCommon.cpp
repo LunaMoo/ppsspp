@@ -2193,6 +2193,8 @@ int FramebufferManagerCommon::EffectSignalWeight(EffectSignal signal) {
 	case EFFECT_SIGNAL_UPSAMPLED: return 2;
 	case EFFECT_SIGNAL_BLENDED: return 3;
 	case EFFECT_SIGNAL_SMALL: return 1;
+	case EFFECT_SIGNAL_FILTERED: return 4;
+	case EFFECT_SIGNAL_FILTERS: return 4;
 	default: return 0;
 	}
 }
@@ -2314,8 +2316,7 @@ void FramebufferManagerCommon::NotifyFramebufferSampled(VirtualFramebuffer *src)
 	auto srcIt = effectBuffers_.find(EffectKey(src));
 	const bool srcCandidate = srcIt != effectBuffers_.end() && (srcIt->second.signals & EFFECT_SIGNALS_CANDIDATE) != 0;
 
-	// What's displayed, and buffers also used for depth, are never effect buffers.
-	const bool dstCanBeEffect = (dst->usageFlags & (FB_USAGE_DISPLAYED_FRAMEBUFFER | FB_USAGE_COLOR_MIXED_DEPTH)) == 0 && dst->fb_address != displayFramebufPtr_;
+	const bool dstCanBeEffect = CanBeEffectTarget(dst);
 	u8 dstSignals = 0;
 	if (dstCanBeEffect) {
 		if (shrinks) {
@@ -2351,6 +2352,69 @@ void FramebufferManagerCommon::NotifyFramebufferSampled(VirtualFramebuffer *src)
 	// Only candidates collect the signals of what they're drawn into, or every texture would get an entry.
 	if (srcCandidate && srcSignals) {
 		AddEffectSignals(src, srcSignals);
+	}
+}
+
+// What's displayed, and buffers also used for depth, are never effect buffers.
+bool FramebufferManagerCommon::CanBeEffectTarget(const VirtualFramebuffer *dst) const {
+	return (dst->usageFlags & (FB_USAGE_DISPLAYED_FRAMEBUFFER | FB_USAGE_COLOR_MIXED_DEPTH)) == 0 && dst->fb_address != displayFramebufPtr_;
+}
+
+// Filters like edge detection or a blur draw a framebuffer into another several times, a pixel or two apart
+// (in one draw or several). Those offsets are in PSP pixels, so at a higher render resolution they're further
+// apart than the detail they compare or blur: DBZ Tenkaichi Tag Team takes the difference of its characters'
+// IDs (in the scene's alpha) against a copy 0.7 pixels off for an outline, then multiplies that over the scene
+// at three offsets a pixel apart. That's a solid line two or three pixels wide on the PSP, but at 4x it's three
+// thin lines off the models. With the buffer in between at 1x, it's what the PSP draws.
+// Only the first draw's offset is kept for each pair, so a game drawing parts of a screen at other offsets
+// doesn't count unless they're that close. The buffer in between is the one that gets a copy first (a draw
+// without blending) and then filters into another; the scene is filtered into too, but by blending.
+VirtualFramebuffer *FramebufferManagerCommon::GetThroughDrawSource(u32 texAddr, const VirtualFramebuffer *dst) const {
+	VirtualFramebuffer *src = nullptr;
+	for (VirtualFramebuffer *vfb : vfbs_) {
+		if (vfb != dst && vfb->fb_address == texAddr && (!src || vfb->colorBindSeq > src->colorBindSeq)) {
+			src = vfb;
+		}
+	}
+	return src;
+}
+
+void FramebufferManagerCommon::NotifyThroughDrawOffset(VirtualFramebuffer *src, VirtualFramebuffer *dst, float dx, float dy, bool nearby) {
+	const int frame = gpuStats.totals.numFlips;
+	EffectTap *found = nullptr;
+	for (EffectTap &tap : effectTaps_) {
+		if (tap.src == src && tap.dst == dst && tap.frame == frame) {
+			found = &tap;
+			break;
+		}
+	}
+	if (!found) {
+		if (!effectTaps_.empty() && effectTaps_.front().frame != frame) {
+			effectTaps_.clear();
+		}
+		if (effectTaps_.size() >= 64) {
+			return;
+		}
+		effectTaps_.push_back(EffectTap{ src, dst, frame, dx, dy, !gstate.isAlphaBlendEnabled(), false });
+		found = &effectTaps_.back();
+	}
+	if (found->filtered) {
+		return;
+	}
+	if (!nearby) {
+		const float ox = fabsf(dx - found->dx);
+		const float oy = fabsf(dy - found->dy);
+		if ((ox == 0.0f && oy == 0.0f) || ox > 2.0f || oy > 2.0f) {
+			return;
+		}
+	}
+	found->filtered = true;
+	if (found->copied && CanBeEffectTarget(dst)) {
+		AddEffectSignals(dst, EFFECT_SIGNAL_FILTERED);
+	}
+	auto srcIt = effectBuffers_.find(EffectKey(src));
+	if (srcIt != effectBuffers_.end() && (srcIt->second.signals & EFFECT_SIGNAL_FILTERED) != 0) {
+		AddEffectSignals(src, EFFECT_SIGNAL_FILTERS);
 	}
 }
 
@@ -3751,6 +3815,7 @@ void FramebufferManagerCommon::DestroyAllFBOs() {
 	DiscardFramebufferCopy();
 	currentRenderVfb_ = nullptr;
 	effectBuffers_.clear();
+	effectTaps_.clear();
 	SetEffect16Bit(nullptr);
 	effectSourceVfb_ = nullptr;
 	effectSourceCopy_ = nullptr;

@@ -1028,6 +1028,12 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 		cyclesExecuted += EstimateFillCycles(prim, verts, inds, count, decoder, vertexType);
 		if (tracksEffects) {
 			gstate_c.queuedThroughDraws.Add(drawnBounds);
+			VirtualFramebuffer *texFb = framebufferManager_->GetThroughDrawSource(gstate.getTextureAddress(0), vfb);
+			float dx, dy;
+			bool nearby;
+			if (texFb && DrawEngineCommon::GetThroughTexOffset(verts, inds, count, decoder, vertexType, &dx, &dy, &nearby)) {
+				framebufferManager_->NotifyThroughDrawOffset(texFb, vfb, dx, dy, nearby);
+			}
 		}
 	}
 	if (tracksSelfTexture) {

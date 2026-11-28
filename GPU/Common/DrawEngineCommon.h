@@ -111,6 +111,9 @@ public:
 	static bool TestBoundingBoxFast(const float *cullMatrix, const void *vdata, const void *idata, int vertexCount, const VertexDecoder *dec, u32 vertType, ClipInfoFlags *clipInfoFlags, bool cpuCullSupported = false);
 	// If bounds isn't null, it gets where the draw can write, in the framebuffer's pixels.
 	bool TestBoundingBoxThrough(GEPrimitiveType prim, const void *vdata, const void *idata, int vertexCount, const VertexDecoder *dec, u32 vertType, int *bytesRead, ClipInfoFlags *flags, DrawnBounds *bounds);
+	// For a through mode draw, the first vertex's texture coordinates (in texels) minus its position, and whether
+	// another vertex has them a pixel or two off from that (one draw taking several taps of a filter).
+	static bool GetThroughTexOffset(const void *vdata, const void *idata, int vertexCount, const VertexDecoder *dec, u32 vertType, float *dx, float *dy, bool *nearby);
 	// For a draw too big or complex for TestBoundingBoxFast: the fallbacks it would need on a GPU that lacks
 	// depth clamp or clip distances, assuming the worst, or nothing (not Valid) if none are needed.
 	static ClipInfoFlags UncheckedClipInfoFlags();

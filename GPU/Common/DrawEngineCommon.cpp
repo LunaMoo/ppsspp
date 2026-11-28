@@ -794,6 +794,43 @@ bool DrawEngineCommon::TestBoundingBoxFast(const float *cullMatrix, const void *
 
 // 2D bounding box test against scissor. No indexing yet.
 // Only supports non-indexed draws with float positions. TODO: Add more float formats.
+bool DrawEngineCommon::GetThroughTexOffset(const void *vdata, const void *idata, int vertexCount, const VertexDecoder *dec, u32 vertType, float *dx, float *dy, bool *nearby) {
+	IndexConverter conv(vertType, idata);
+	const u32 posType = vertType & GE_VTYPE_POS_MASK;
+	const u32 tcType = vertType & GE_VTYPE_TC_MASK;
+	if (vertexCount <= 0 || posType == 0 || tcType == 0) {
+		return false;
+	}
+	*nearby = false;
+	// The first few are enough to find a filter's taps.
+	for (int i = 0; i < std::min(vertexCount, 64); i++) {
+		const u8 *v = (const u8 *)vdata + dec->VertexSize() * conv(i);
+		float x, y, u, t;
+		switch (posType) {
+		case GE_VTYPE_POS_FLOAT: x = ((const float *)(v + dec->posoff))[0]; y = ((const float *)(v + dec->posoff))[1]; break;
+		case GE_VTYPE_POS_16BIT: x = ((const s16 *)(v + dec->posoff))[0]; y = ((const s16 *)(v + dec->posoff))[1]; break;
+		default: x = (v + dec->posoff)[0]; y = (v + dec->posoff)[1]; break;
+		}
+		switch (tcType) {
+		case GE_VTYPE_TC_FLOAT: u = ((const float *)(v + dec->tcoff))[0]; t = ((const float *)(v + dec->tcoff))[1]; break;
+		case GE_VTYPE_TC_16BIT: u = ((const u16 *)(v + dec->tcoff))[0]; t = ((const u16 *)(v + dec->tcoff))[1]; break;
+		default: u = (v + dec->tcoff)[0]; t = (v + dec->tcoff)[1]; break;
+		}
+		if (i == 0) {
+			*dx = u - x;
+			*dy = t - y;
+		} else {
+			const float ox = fabsf(u - x - *dx);
+			const float oy = fabsf(t - y - *dy);
+			if ((ox != 0.0f || oy != 0.0f) && ox <= 2.0f && oy <= 2.0f) {
+				*nearby = true;
+				break;
+			}
+		}
+	}
+	return true;
+}
+
 bool DrawEngineCommon::TestBoundingBoxThrough(GEPrimitiveType prim, const void *vdata, const void *idata, int vertexCount, const VertexDecoder *dec, u32 vertType, int *bytesRead, ClipInfoFlags *flags, DrawnBounds *bounds) {
 	// For through mode, we only check FlatZ.
 	*flags |= ClipInfoFlags::Valid;

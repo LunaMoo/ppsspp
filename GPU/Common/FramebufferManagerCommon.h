@@ -425,6 +425,12 @@ public:
 	bool BindFramebufferAsColorTexture(int stage, VirtualFramebuffer *framebuffer, int flags, int layer);
 	// A draw into the current render target samples the color of src. Feeds the effect buffer detection.
 	void NotifyFramebufferSampled(VirtualFramebuffer *src);
+	// The framebuffer a through mode draw into dst reads, if its texture is one (the newest at that address).
+	VirtualFramebuffer *GetThroughDrawSource(u32 texAddr, const VirtualFramebuffer *dst) const;
+	// A through mode draw into dst reads src with its texture coordinates offset by (dx, dy) from its positions,
+	// and nearby if some of its vertices have them a pixel or two off that. Feeds the effect buffer detection:
+	// see EFFECT_SIGNAL_FILTERED.
+	void NotifyThroughDrawOffset(VirtualFramebuffer *src, VirtualFramebuffer *dst, float dx, float dy, bool nearby);
 	// "Lower resolution for effects" changed since the framebuffers were made, which needs them remade.
 	bool BloomHackChanged() const {
 		return bloomHack_ != EffectiveBloomHack();
@@ -800,6 +806,8 @@ protected:
 		EFFECT_SIGNAL_UPSAMPLED = 8,    // Drawn into a framebuffer at least twice its size.
 		EFFECT_SIGNAL_BLENDED = 16,     // That, blended over what's there: how glows, blurs and the like are put over the scene.
 		EFFECT_SIGNAL_SMALL = 32,       // Small enough for the Balanced size preset.
+		EFFECT_SIGNAL_FILTERED = 64,    // Copied from another framebuffer, then drawn from it again a pixel or less off (a filter).
+		EFFECT_SIGNAL_FILTERS = 128,    // Filtered, and drawn into another framebuffer that way too.
 		// A candidate is a buffer that may be part of an effect chain, which takes one of these.
 		EFFECT_SIGNALS_CANDIDATE = EFFECT_SIGNAL_DOWNSAMPLED | EFFECT_SIGNAL_CHAINED,
 	};
@@ -819,6 +827,18 @@ protected:
 	bool IsEffectBuffer(const VirtualFramebuffer *vfb) const;
 	bool MayBeEffectBuffer(const VirtualFramebuffer *vfb) const;
 	std::unordered_map<u64, EffectBufferInfo> effectBuffers_;
+	// The first offset seen this frame for each texture address and render target pair, for NotifyThroughDrawOffset.
+	struct EffectTap {
+		const VirtualFramebuffer *src;
+		const VirtualFramebuffer *dst;
+		int frame;
+		float dx;
+		float dy;
+		bool copied;
+		bool filtered;
+	};
+	std::vector<EffectTap> effectTaps_;
+	bool CanBeEffectTarget(const VirtualFramebuffer *dst) const;
 
 	Draw::Framebuffer *ResampleEffectSource(Draw::Framebuffer *from, int fromW, int fromH, int w, int h);
 	Draw::Framebuffer *BlurEffectSource(Draw::Framebuffer *from, int w, int h, float sigma);
