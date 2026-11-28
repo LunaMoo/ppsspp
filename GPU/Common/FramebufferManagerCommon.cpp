@@ -2191,7 +2191,7 @@ int FramebufferManagerCommon::EffectSignalWeight(EffectSignal signal) {
 	case EFFECT_SIGNAL_CHAINED: return 3;
 	case EFFECT_SIGNAL_FEEDS_CHAIN: return 3;
 	case EFFECT_SIGNAL_UPSAMPLED: return 2;
-	case EFFECT_SIGNAL_ADDITIVE: return 3;
+	case EFFECT_SIGNAL_BLENDED: return 3;
 	case EFFECT_SIGNAL_SMALL: return 1;
 	default: return 0;
 	}
@@ -2334,10 +2334,14 @@ void FramebufferManagerCommon::NotifyFramebufferSampled(VirtualFramebuffer *src)
 	}
 	if (grows) {
 		srcSignals |= EFFECT_SIGNAL_UPSAMPLED;
-		const bool additive = gstate.isAlphaBlendEnabled() && gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_ADD &&
+		// Added to or taken from what's there (glows), or alpha blended over it. Dissidia 012 does both, taking a
+		// blurred half size copy of the scene from it, and alpha blending a quarter size one over that.
+		const GEBlendMode eq = gstate.getBlendEq();
+		const bool addsOrSubtracts = (eq == GE_BLENDMODE_MUL_AND_ADD || eq == GE_BLENDMODE_MUL_AND_SUBTRACT || eq == GE_BLENDMODE_MUL_AND_SUBTRACT_REVERSE) &&
 			gstate.getBlendFuncB() == GE_DSTBLEND_FIXB && gstate.getFixB() != 0;
-		if (additive) {
-			srcSignals |= EFFECT_SIGNAL_ADDITIVE;
+		const bool alphaBlends = eq == GE_BLENDMODE_MUL_AND_ADD && gstate.getBlendFuncA() == GE_SRCBLEND_SRCALPHA && gstate.getBlendFuncB() == GE_DSTBLEND_INVSRCALPHA;
+		if (gstate.isAlphaBlendEnabled() && (addsOrSubtracts || alphaBlends)) {
+			srcSignals |= EFFECT_SIGNAL_BLENDED;
 		}
 	}
 

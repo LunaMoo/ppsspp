@@ -798,7 +798,7 @@ protected:
 		EFFECT_SIGNAL_CHAINED = 2,      // Drawn from a candidate (see below) without being enlarged: blur passes.
 		EFFECT_SIGNAL_FEEDS_CHAIN = 4,  // A candidate drawn into another one (the next blur pass).
 		EFFECT_SIGNAL_UPSAMPLED = 8,    // Drawn into a framebuffer at least twice its size.
-		EFFECT_SIGNAL_ADDITIVE = 16,    // That, with additive blending: how glows are put over the scene.
+		EFFECT_SIGNAL_BLENDED = 16,     // That, blended over what's there: how glows, blurs and the like are put over the scene.
 		EFFECT_SIGNAL_SMALL = 32,       // Small enough for the Balanced size preset.
 		// A candidate is a buffer that may be part of an effect chain, which takes one of these.
 		EFFECT_SIGNALS_CANDIDATE = EFFECT_SIGNAL_DOWNSAMPLED | EFFECT_SIGNAL_CHAINED,
