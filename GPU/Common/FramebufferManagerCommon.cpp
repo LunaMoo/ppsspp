@@ -86,7 +86,8 @@ int FramebufferManagerCommon::EffectiveBloomHack() {
 	} else if (PSP_CoreParameter().compat.flags().ForceLowerResolutionForEffectsOff) {
 		return 0;
 	}
-	return g_Config.iBloomHack;
+	// Not past the last level, which an edited or newer config could have.
+	return std::min(g_Config.iBloomHack, (int)BLOOMHACK_AUTO_SMOOTH);
 }
 
 // Returns true if we need to stop the render thread
@@ -2361,6 +2362,11 @@ void FramebufferManagerCommon::NotifyFramebufferSampled(VirtualFramebuffer *src)
 		}
 	}
 
+	// An outline (see IsCelOutlineBuffer).
+	if (EffectCompositeDarkens() && IsFilterBuffer(src) && !MayBeEffectBuffer(dst)) {
+		effectBuffers_[EffectKey(src)].multiplied = true;
+	}
+
 	if (dstSignals) {
 		AddEffectSignals(dst, dstSignals);
 	}
@@ -2497,9 +2503,24 @@ bool FramebufferManagerCommon::IsFilterBuffer(const VirtualFramebuffer *vfb) con
 	return (it->second.signals & EFFECT_SIGNAL_FILTERED) != 0;
 }
 
-// Auto (cel-shading). A game's own outline, found as a filter, is a few PSP pixels wide, so at 1x it's blocky,
-// and smoothed it's soft; and either way it lies over the models' edges as much as next to them. This draws one
-// instead, as sharp as the models, only outside them, as wide as Effects spread says (1.5 PSP pixels at 100%):
+// Multisampled depth isn't read as a texture here.
+bool FramebufferManagerCommon::CanDrawCelOutlines() const {
+	return bloomHack_ == BLOOMHACK_AUTO_SMOOTH && draw_->GetDeviceCaps().textureDepthSupported && g_Config.iMultiSampleLevel == 0;
+}
+
+// Stays at full resolution for DrawCelOutline. Until it's seen multiplied over the scene, it's at 1x and smoothed
+// like other effects: a filter drawn over the scene another way (a blur) still is.
+bool FramebufferManagerCommon::IsCelOutlineBuffer(const VirtualFramebuffer *vfb) const {
+	if (!CanDrawCelOutlines() || !IsFilterBuffer(vfb)) {
+		return false;
+	}
+	return effectBuffers_.find(EffectKey(vfb))->second.multiplied;
+}
+
+// Auto (smooth), for outlines. A game's own outline, found as a filter and multiplied over the scene, is a few PSP
+// pixels wide, so at 1x it's blocky, and smoothed it's soft; and either way it lies over the models' edges as much
+// as next to them. This draws one instead, as sharp as the models, only outside them, as wide as Effects spread
+// says (0.75 PSP pixels at 100%, which at a high resolution reads like the PSP's line at its size):
 // - CEL_EDGES finds the edges of whatever is in front: pixels with a neighbor that belongs to something else (by
 //   the scene's alpha, where DBZ Tenkaichi Tag Team keeps its characters' IDs for its own outline) and is further
 //   away. They take the darkness of the game's outline around them, so only edges the game outlines get one.
@@ -2509,14 +2530,13 @@ bool FramebufferManagerCommon::IsFilterBuffer(const VirtualFramebuffer *vfb) con
 // The game's draws then multiply the scene by white. Needs the scene's depth as a texture.
 bool FramebufferManagerCommon::DrawsCelOutline(const VirtualFramebuffer *src) const {
 	const VirtualFramebuffer *dst = currentRenderVfb_;
-	if (bloomHack_ != BLOOMHACK_AUTO_CEL || g_Config.iEffectsOpacity <= 0 || !dst || dst == src || !src->fbo || !dst->fbo) {
+	if (!CanDrawCelOutlines() || g_Config.iEffectsOpacity <= 0 || !dst || dst == src || !src->fbo || !dst->fbo) {
 		return false;
 	}
-	// Multisampled depth isn't read as a texture here.
-	if (!draw_->GetDeviceCaps().textureDepthSupported || dst->fbo->MultiSampleLevel() > 0 || src->renderWidth != dst->renderWidth || src->renderHeight != dst->renderHeight) {
+	if (dst->fbo->MultiSampleLevel() > 0 || src->renderWidth != dst->renderWidth || src->renderHeight != dst->renderHeight) {
 		return false;
 	}
-	return IsFilterBuffer(src) && !MayBeEffectBuffer(dst) && EffectCompositeDarkens();
+	return IsCelOutlineBuffer(src) && !MayBeEffectBuffer(dst) && EffectCompositeDarkens();
 }
 
 void FramebufferManagerCommon::CelPass(Draw2DPipeline *pipeline, Draw::Framebuffer *dest, Draw::Framebuffer *tex0, Draw::Aspect aspect0, Draw::Framebuffer *tex1, Draw::Aspect aspect1, Draw::Framebuffer *tex2, Draw::Aspect aspect2, int param) {
@@ -2581,7 +2601,7 @@ Draw::Framebuffer *FramebufferManagerCommon::DrawCelOutline(const VirtualFramebu
 	const int nearSign = depthFunc == GE_COMP_GREATER || depthFunc == GE_COMP_GEQUAL ? 1 : -1;
 	const int scale = dst->renderScaleFactor;
 	const float spread = std::min(std::max(g_Config.iEffectsSpread, 25), 300) / 100.0f;
-	const float width = std::min(1.5f * spread * scale, 150.0f);
+	const float width = std::min(0.75f * spread * scale, 150.0f);
 	// A regular octagon: the square's half side is 0.414 of its radius, the diagonal steps 0.293.
 	const int square = std::max((int)(width * 0.414f + 0.5f), 1);
 	// At least 1, which keeps the depth's sign in the last pass's scale factor.
@@ -2830,12 +2850,11 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 		force1x = vfb->bufferWidth < 480 || vfb->bufferWidth > 800 || vfb->bufferHeight < 272; // GOW uses 864x272
 		break;
 	case BLOOMHACK_AUTO:
-	case BLOOMHACK_AUTO_SMOOTH:
 		force1x = IsEffectBuffer(vfb);
 		break;
-	case BLOOMHACK_AUTO_CEL:
+	case BLOOMHACK_AUTO_SMOOTH:
 		// Outlines stay at full resolution, as sharp as the models (see DrawCelOutline).
-		force1x = IsEffectBuffer(vfb) && !IsFilterBuffer(vfb);
+		force1x = IsEffectBuffer(vfb) && !IsCelOutlineBuffer(vfb);
 		break;
 	}
 

@@ -208,7 +208,7 @@ Draw2DPipelineInfo GenerateDraw2DCopyScaleAlphaFs(ShaderWriter &writer) {
 	};
 }
 
-// Auto (cel-shading). The scene's depth is read as farness (0 near, 1 far) whichever way the game's depth test
+// Auto (smooth)'s outlines (FramebufferManagerCommon::DrawCelOutline). The scene's depth is read as farness (0 near, 1 far) whichever way the game's depth test
 // goes: the scale factor's sign says which (positive where nearer is greater). Farness travels between the passes
 // in 16 bits of red and green, the line's darkness in blue; 1.0 in all of them is nothing.
 static const SamplerDef celSamplers[3] = {

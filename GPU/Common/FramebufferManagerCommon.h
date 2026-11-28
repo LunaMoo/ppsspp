@@ -248,12 +248,12 @@ inline DrawTextureFlags operator | (DrawTextureFlags lhs, DrawTextureFlags rhs) 
 enum {
 	BLOOMHACK_AUTO = 4,  // Effect buffers are rendered at 1x.
 	BLOOMHACK_AUTO_SMOOTH = 5,  // Like BLOOMHACK_AUTO, and smoothly scaled up where an effect is drawn over the scene.
-	BLOOMHACK_AUTO_CEL = 6,  // Like BLOOMHACK_AUTO_SMOOTH, but outlines found as filters are drawn sharp (see DrawCelOutline).
+	// Outlines found as filters are drawn sharp instead (see DrawCelOutline).
 };
 
 // Effect buffers render at 1x.
 inline bool BloomHackRendersEffectsAt1x(int bloomHack) {
-	return bloomHack == BLOOMHACK_AUTO || bloomHack == BLOOMHACK_AUTO_SMOOTH || bloomHack == BLOOMHACK_AUTO_CEL;
+	return bloomHack == BLOOMHACK_AUTO || bloomHack == BLOOMHACK_AUTO_SMOOTH;
 }
 
 enum class TempFBO {
@@ -280,7 +280,7 @@ enum class TempFBO {
 	EFFECT_SOURCE_3,
 	// A framebuffer at 1x for a filter effect to read (see FilterSourceAt1x).
 	EFFECT_FILTER_SOURCE,
-	// The passes of Auto (cel-shading)'s outline, and the white texture the game's own draws get instead.
+	// The passes of DrawCelOutline, and the white texture the game's own draws get instead.
 	CEL,
 	CEL_2,
 	CEL_WHITE,
@@ -457,12 +457,12 @@ public:
 	static bool EffectCompositeIsMasked();
 	// The current draw multiplies the scene by the effect, so it's dark lines or shading (see SmoothEffectTexture).
 	static bool EffectCompositeDarkens();
-	// Auto (cel-shading): the current draw multiplies the scene by an outline found as a filter (see DrawCelOutline).
+	// Auto (smooth): the current draw multiplies the scene by an outline found as a filter (see DrawCelOutline).
 	bool DrawsCelOutline(const VirtualFramebuffer *src) const;
 	// Draws the outline over the scene once a frame, and returns a white texture for the game's own draws.
 	Draw::Framebuffer *DrawCelOutline(const VirtualFramebuffer *src, Draw::Framebuffer *factor);
 	bool SmoothsEffects() const {
-		return bloomHack_ == BLOOMHACK_AUTO_SMOOTH || bloomHack_ == BLOOMHACK_AUTO_CEL;
+		return bloomHack_ == BLOOMHACK_AUTO_SMOOTH;
 	}
 	bool TracksEffectBuffers() const {
 		return bloomHack_ >= BLOOMHACK_AUTO && renderScaleFactor_ != 1 && useBufferedRendering_;
@@ -833,6 +833,8 @@ protected:
 	struct EffectBufferInfo {
 		u8 signals = 0;
 		bool confirmed = false;
+		// A filter multiplied over the scene: an outline (see DrawCelOutline).
+		bool multiplied = false;
 	};
 	static int EffectSignalWeight(EffectSignal signal);
 	static bool GetQueuedDrawScale(bool *shrinks, bool *grows);
@@ -861,6 +863,8 @@ protected:
 	Draw::Framebuffer *SmoothEffectComposite(VirtualFramebuffer *src);
 	Draw::Framebuffer *FilterSourceAt1x(VirtualFramebuffer *src);
 	bool IsFilterBuffer(const VirtualFramebuffer *vfb) const;
+	bool CanDrawCelOutlines() const;
+	bool IsCelOutlineBuffer(const VirtualFramebuffer *vfb) const;
 	void CelPass(Draw2DPipeline *pipeline, Draw::Framebuffer *dest, Draw::Framebuffer *tex0, Draw::Aspect aspect0, Draw::Framebuffer *tex1, Draw::Aspect aspect1, Draw::Framebuffer *tex2, Draw::Aspect aspect2, int param);
 	const VirtualFramebuffer *celSourceVfb_ = nullptr;
 	int celSourceBindSeq_ = -1;

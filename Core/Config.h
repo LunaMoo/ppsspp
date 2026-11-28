@@ -416,7 +416,7 @@ public:
 	float fHomebrewScrollPosition;
 	float fRemoteScrollPosition;
 	bool bReportAccurateFreeStorageSpace;
-	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive, 4 = auto, 5 = auto smooth, 6 = auto cel-shading (see BLOOMHACK_AUTO)
+	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive, 4 = auto, 5 = auto smooth (see BLOOMHACK_AUTO)
 	int iEffectsSpread;  // In %, for the smooth level of iBloomHack.
 	int iEffectsOpacity;  // In %, for the smooth level of iBloomHack. 0 leaves the effects out.
 	bool bEffects16BitColor;  // For the Auto levels of iBloomHack: round 16-bit effect buffers like the PSP.

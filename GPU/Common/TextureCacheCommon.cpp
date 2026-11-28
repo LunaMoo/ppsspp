@@ -2603,7 +2603,7 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 	// Auto (smooth) scales up an effect drawn over the scene after its palette lookup (blurring the values before
 	// it would change what they map to), so that needs the depal pass. The 3rd Birthday draws its bloom this way.
 	const bool smoothEffect = need_depalettize && !depth && framebufferManager_->SmoothsEffectComposite(framebuffer);
-	// Auto (cel-shading) draws its outline from the factor the game multiplies the scene by: after the lookup too.
+	// An outline drawn sharp (DrawCelOutline) comes from the factor the game multiplies the scene by: after the lookup too.
 	const bool celOutline = need_depalettize && !depth && framebufferManager_->DrawsCelOutline(framebuffer);
 	if (smoothEffect || celOutline) {
 		useShaderDepal = false;

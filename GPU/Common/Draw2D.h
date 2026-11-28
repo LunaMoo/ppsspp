@@ -27,7 +27,7 @@ enum Draw2DShader {
 	DRAW2D_COPY_COLOR_MIN,  // The lower of the source and destination color. Needs blendMinMaxSupported.
 	DRAW2D_COPY_SCALE_RGB,  // Copies with the color multiplied by the scale factor / 100.
 	DRAW2D_COPY_SCALE_ALPHA,  // Copies with the alpha multiplied by the scale factor / 100.
-	// Auto (cel-shading)'s outline (see FramebufferManagerCommon::DrawCelOutline), in five passes and a multiply.
+	// Auto (smooth)'s outlines (see FramebufferManagerCommon::DrawCelOutline), in five passes and a multiply.
 	DRAW2D_CEL_EDGES,
 	DRAW2D_CEL_MIN_H,
 	DRAW2D_CEL_MIN_V,
