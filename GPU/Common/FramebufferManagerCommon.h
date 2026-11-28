@@ -248,11 +248,12 @@ inline DrawTextureFlags operator | (DrawTextureFlags lhs, DrawTextureFlags rhs) 
 enum {
 	BLOOMHACK_AUTO = 4,  // Effect buffers are rendered at 1x.
 	BLOOMHACK_AUTO_SMOOTH = 5,  // Like BLOOMHACK_AUTO, and smoothly scaled up where an effect is drawn over the scene.
+	BLOOMHACK_AUTO_CEL = 6,  // Like BLOOMHACK_AUTO_SMOOTH, but outlines found as filters are drawn sharp (see DrawCelOutline).
 };
 
 // Effect buffers render at 1x.
 inline bool BloomHackRendersEffectsAt1x(int bloomHack) {
-	return bloomHack == BLOOMHACK_AUTO || bloomHack == BLOOMHACK_AUTO_SMOOTH;
+	return bloomHack == BLOOMHACK_AUTO || bloomHack == BLOOMHACK_AUTO_SMOOTH || bloomHack == BLOOMHACK_AUTO_CEL;
 }
 
 enum class TempFBO {
@@ -279,6 +280,10 @@ enum class TempFBO {
 	EFFECT_SOURCE_3,
 	// A framebuffer at 1x for a filter effect to read (see FilterSourceAt1x).
 	EFFECT_FILTER_SOURCE,
+	// The passes of Auto (cel-shading)'s outline, and the white texture the game's own draws get instead.
+	CEL,
+	CEL_2,
+	CEL_WHITE,
 };
 
 inline Draw::DataFormat GEFormatToThin3D(GEBufferFormat geFormat) {
@@ -452,6 +457,13 @@ public:
 	static bool EffectCompositeIsMasked();
 	// The current draw multiplies the scene by the effect, so it's dark lines or shading (see SmoothEffectTexture).
 	static bool EffectCompositeDarkens();
+	// Auto (cel-shading): the current draw multiplies the scene by an outline found as a filter (see DrawCelOutline).
+	bool DrawsCelOutline(const VirtualFramebuffer *src) const;
+	// Draws the outline over the scene once a frame, and returns a white texture for the game's own draws.
+	Draw::Framebuffer *DrawCelOutline(const VirtualFramebuffer *src, Draw::Framebuffer *factor);
+	bool SmoothsEffects() const {
+		return bloomHack_ == BLOOMHACK_AUTO_SMOOTH || bloomHack_ == BLOOMHACK_AUTO_CEL;
+	}
 	bool TracksEffectBuffers() const {
 		return bloomHack_ >= BLOOMHACK_AUTO && renderScaleFactor_ != 1 && useBufferedRendering_;
 	}
@@ -848,6 +860,11 @@ protected:
 	Draw::Framebuffer *BlurEffectSource(Draw::Framebuffer *from, int w, int h, float sigma);
 	Draw::Framebuffer *SmoothEffectComposite(VirtualFramebuffer *src);
 	Draw::Framebuffer *FilterSourceAt1x(VirtualFramebuffer *src);
+	bool IsFilterBuffer(const VirtualFramebuffer *vfb) const;
+	void CelPass(Draw2DPipeline *pipeline, Draw::Framebuffer *dest, Draw::Framebuffer *tex0, Draw::Aspect aspect0, Draw::Framebuffer *tex1, Draw::Aspect aspect1, Draw::Framebuffer *tex2, Draw::Aspect aspect2, int param);
+	const VirtualFramebuffer *celSourceVfb_ = nullptr;
+	int celSourceBindSeq_ = -1;
+	int celSourceFrame_ = -1;
 	const VirtualFramebuffer *filterSourceVfb_ = nullptr;
 	Draw::Framebuffer *filterSourceCopy_ = nullptr;
 	int filterSourceBindSeq_ = -1;
@@ -914,6 +931,12 @@ protected:
 	Draw2DPipeline *draw2DPipelineCopyColorMin_ = nullptr;
 	Draw2DPipeline *draw2DPipelineCopyScaleRGB_ = nullptr;
 	Draw2DPipeline *draw2DPipelineCopyScaleAlpha_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCelEdges_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCelMinH_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCelMinV_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCelMinD_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCelOutline_ = nullptr;
+	Draw2DPipeline *draw2DPipelineCopyColorMultiply_ = nullptr;
 
 	Draw2D draw2D_;
 	// The fragment shaders are "owned" by the pipelines since they're 1:1.

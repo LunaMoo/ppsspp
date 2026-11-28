@@ -1106,6 +1106,8 @@ void FramebufferManagerCommon::DestroyFramebuf(VirtualFramebuffer *v) {
 		effectSourceVfb_ = nullptr;
 	if (filterSourceVfb_ == v)
 		filterSourceVfb_ = nullptr;
+	if (celSourceVfb_ == v)
+		celSourceVfb_ = nullptr;
 	if (displayFramebuf_ == v)
 		displayFramebuf_ = nullptr;
 	if (prevDisplayFramebuf_ == v)
@@ -1614,7 +1616,11 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		Draw::Framebuffer *fbo = framebuffer->fbo;
 		if (framebuffer != currentRenderVfb_) {
 			// At most one of these applies: one draws from an effect buffer at 1x, the other into one.
-			if (flags & BINDFBCOLOR_EFFECT_SOURCE) {
+			if ((flags & BINDFBCOLOR_EFFECT_SOURCE) && DrawsCelOutline(framebuffer)) {
+				if (Draw::Framebuffer *white = DrawCelOutline(framebuffer, framebuffer->fbo)) {
+					fbo = white;
+				}
+			} else if (flags & BINDFBCOLOR_EFFECT_SOURCE) {
 				fbo = SmoothEffectComposite(framebuffer);
 			}
 			if (fbo == framebuffer->fbo) {
@@ -2149,14 +2155,15 @@ bool FramebufferManagerCommon::IsEffectBuffer(const VirtualFramebuffer *vfb) con
 }
 
 bool FramebufferManagerCommon::DrawsEffectOverScene(const VirtualFramebuffer *src) const {
-	if (bloomHack_ != BLOOMHACK_AUTO_SMOOTH || g_Config.iEffectsOpacity <= 0) {
+	if (!SmoothsEffects() || g_Config.iEffectsOpacity <= 0) {
 		return false;
 	}
-	return currentRenderVfb_ && src != currentRenderVfb_ && IsEffectBuffer(src) && !MayBeEffectBuffer(currentRenderVfb_);
+	// DrawCelOutline fades its own outline.
+	return currentRenderVfb_ && src != currentRenderVfb_ && IsEffectBuffer(src) && !MayBeEffectBuffer(currentRenderVfb_) && !DrawsCelOutline(src);
 }
 
 bool FramebufferManagerCommon::SkipsEffectDraw(const VirtualFramebuffer *target) const {
-	if (bloomHack_ != BLOOMHACK_AUTO_SMOOTH || g_Config.iEffectsOpacity > 0 || !TracksEffectBuffers()) {
+	if (!SmoothsEffects() || g_Config.iEffectsOpacity > 0 || !TracksEffectBuffers()) {
 		return false;
 	}
 	if (!target || !gstate.isTextureMapEnabled() || gstate.isModeClear() || effectBuffers_.empty() || MayBeEffectBuffer(target)) {
@@ -2482,13 +2489,122 @@ Draw::Framebuffer *FramebufferManagerCommon::FilterSourceAt1x(VirtualFramebuffer
 	return copy;
 }
 
+bool FramebufferManagerCommon::IsFilterBuffer(const VirtualFramebuffer *vfb) const {
+	if (!IsEffectBuffer(vfb)) {
+		return false;
+	}
+	auto it = effectBuffers_.find(EffectKey(vfb));
+	return (it->second.signals & EFFECT_SIGNAL_FILTERED) != 0;
+}
+
+// Auto (cel-shading). A game's own outline, found as a filter, is a few PSP pixels wide, so at 1x it's blocky,
+// and smoothed it's soft; and either way it lies over the models' edges as much as next to them. This draws one
+// instead, as sharp as the models, only outside them, as wide as Effects spread says (1.5 PSP pixels at 100%):
+// - CEL_EDGES finds the edges of whatever is in front: pixels with a neighbor that belongs to something else (by
+//   the scene's alpha, where DBZ Tenkaichi Tag Team keeps its characters' IDs for its own outline) and is further
+//   away. They take the darkness of the game's outline around them, so only edges the game outlines get one.
+// - CEL_MIN_H, _V and _D, and CEL_OUTLINE find the nearest such edge and darkest line within the width (an
+//   octagon: a square, then the two diagonals), and the line goes where the pixel is further away than that edge:
+//   outside what's in front, never on it.
+// The game's draws then multiply the scene by white. Needs the scene's depth as a texture.
+bool FramebufferManagerCommon::DrawsCelOutline(const VirtualFramebuffer *src) const {
+	const VirtualFramebuffer *dst = currentRenderVfb_;
+	if (bloomHack_ != BLOOMHACK_AUTO_CEL || g_Config.iEffectsOpacity <= 0 || !dst || dst == src || !src->fbo || !dst->fbo) {
+		return false;
+	}
+	// Multisampled depth isn't read as a texture here.
+	if (!draw_->GetDeviceCaps().textureDepthSupported || dst->fbo->MultiSampleLevel() > 0 || src->renderWidth != dst->renderWidth || src->renderHeight != dst->renderHeight) {
+		return false;
+	}
+	return IsFilterBuffer(src) && !MayBeEffectBuffer(dst) && EffectCompositeDarkens();
+}
+
+void FramebufferManagerCommon::CelPass(Draw2DPipeline *pipeline, Draw::Framebuffer *dest, Draw::Framebuffer *tex0, Draw::Aspect aspect0, Draw::Framebuffer *tex1, Draw::Aspect aspect1, Draw::Framebuffer *tex2, Draw::Aspect aspect2, int param) {
+	int w, h;
+	draw_->GetFramebufferDimensions(dest, &w, &h);
+	draw_->BindTexture(0, nullptr);
+	draw_->BindTexture(1, nullptr);
+	draw_->BindTexture(2, nullptr);
+	draw_->BindFramebufferAsRenderTarget(dest, { Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE }, "CelOutline");
+	draw_->BindFramebufferAsTexture(tex0, 0, aspect0, Draw::ALL_LAYERS);
+	if (tex1) {
+		draw_->BindFramebufferAsTexture(tex1, 1, aspect1, Draw::ALL_LAYERS);
+	}
+	if (tex2) {
+		draw_->BindFramebufferAsTexture(tex2, 2, aspect2, Draw::ALL_LAYERS);
+	}
+	Draw::SamplerState *nearest = draw2D_.NearestSampler();
+	Draw::SamplerState *samplers[3] = { nearest, nearest, nearest };
+	draw_->BindSamplerStates(0, 3, samplers);
+	Draw::Viewport viewport{ 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+	draw_->SetViewport(viewport);
+	draw_->SetScissorRect(0, 0, w, h);
+	draw2D_.Blit(pipeline, 0.0f, 0.0f, (float)w, (float)h, 0.0f, 0.0f, (float)w, (float)h, (float)w, (float)h, (float)w, (float)h, false, param);
+	draw_->BindTexture(1, nullptr);
+	draw_->BindTexture(2, nullptr);
+	gstate_c.Dirty(DIRTY_ALL_RENDER_STATE);
+}
+
+Draw::Framebuffer *FramebufferManagerCommon::DrawCelOutline(const VirtualFramebuffer *src, Draw::Framebuffer *factor) {
+	VirtualFramebuffer *dst = currentRenderVfb_;
+	Draw::Framebuffer *white = GetTempFBO(TempFBO::CEL_WHITE, 8, 8);
+	if (!white) {
+		return nullptr;
+	}
+	const int frame = gpuStats.totals.numFlips;
+	if (celSourceVfb_ == src && celSourceBindSeq_ == src->colorBindSeq && celSourceFrame_ == frame) {
+		return white;
+	}
+	Draw2DPipeline *edgesPipeline = Get2DPipeline(DRAW2D_CEL_EDGES);
+	Draw2DPipeline *rowsPipeline = Get2DPipeline(DRAW2D_CEL_MIN_H);
+	Draw2DPipeline *columnsPipeline = Get2DPipeline(DRAW2D_CEL_MIN_V);
+	Draw2DPipeline *diagonalPipeline = Get2DPipeline(DRAW2D_CEL_MIN_D);
+	Draw2DPipeline *outlinePipeline = Get2DPipeline(DRAW2D_CEL_OUTLINE);
+	Draw2DPipeline *multiplyPipeline = Get2DPipeline(DRAW2D_COPY_COLOR_MULTIPLY);
+	const int w = dst->renderWidth;
+	const int h = dst->renderHeight;
+	Draw::Framebuffer *edges = GetTempFBO(TempFBO::CEL, w, h);
+	Draw::Framebuffer *rows = GetTempFBO(TempFBO::CEL_2, w, h);
+	if (!edgesPipeline || !rowsPipeline || !columnsPipeline || !diagonalPipeline || !outlinePipeline || !multiplyPipeline || !edges || !rows) {
+		return nullptr;
+	}
+	celSourceVfb_ = src;
+	celSourceBindSeq_ = src->colorBindSeq;
+	celSourceFrame_ = frame;
+
+	// The game's draws multiply by white.
+	draw_->BindTexture(0, nullptr);
+	draw_->BindFramebufferAsRenderTarget(white, { Draw::RPAction::CLEAR, Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE, 0xFFFFFFFF }, "CelOutlineWhite");
+
+	// Which way nearer goes, from the depth test the scene was drawn with.
+	const GEComparison depthFunc = gstate.getDepthTestFunction();
+	const int nearSign = depthFunc == GE_COMP_GREATER || depthFunc == GE_COMP_GEQUAL ? 1 : -1;
+	const int scale = dst->renderScaleFactor;
+	const float spread = std::min(std::max(g_Config.iEffectsSpread, 25), 300) / 100.0f;
+	const float width = std::min(1.5f * spread * scale, 150.0f);
+	// A regular octagon: the square's half side is 0.414 of its radius, the diagonal steps 0.293.
+	const int square = std::max((int)(width * 0.414f + 0.5f), 1);
+	// At least 1, which keeps the depth's sign in the last pass's scale factor.
+	const int diagonal = std::max((int)(width * 0.293f + 0.5f), 1);
+	const Draw::Aspect color = Draw::Aspect::COLOR_BIT;
+	CelPass(edgesPipeline, edges, factor, color, dst->fbo, color, dst->fbo, Draw::Aspect::DEPTH_BIT, scale * nearSign);
+	CelPass(rowsPipeline, rows, edges, color, nullptr, color, nullptr, color, square);
+	CelPass(columnsPipeline, edges, rows, color, nullptr, color, nullptr, color, square);
+	CelPass(diagonalPipeline, rows, edges, color, nullptr, color, nullptr, color, diagonal);
+	CelPass(outlinePipeline, edges, rows, color, dst->fbo, Draw::Aspect::DEPTH_BIT, nullptr, color, diagonal * nearSign);
+	const int opacity = std::min(std::max(g_Config.iEffectsOpacity, 0), 100);
+	BlitUsingRaster(edges, 0.0f, 0.0f, (float)w, (float)h, dst->fbo, 0.0f, 0.0f, (float)w, (float)h, false, opacity, multiplyPipeline, "CelOutlineMultiply");
+	RebindFramebuffer("After DrawCelOutline");
+	return white;
+}
+
 // Auto (smooth): the effect buffer is at 1x as in Auto, so what it holds matches the PSP. But the draw that
 // stretches it over the full resolution scene does so with plain bilinear filtering (or nearest), which shows
 // every 1x texel as a block or diamond. That draw gets a copy scaled up smoothly instead (SmoothEffectTexture).
 // Everything else stays as the game drew it.
 bool FramebufferManagerCommon::SmoothsEffectComposite(const VirtualFramebuffer *src) const {
 	const VirtualFramebuffer *dst = currentRenderVfb_;
-	if (bloomHack_ != BLOOMHACK_AUTO_SMOOTH || g_Config.iEffectsOpacity <= 0 || !dst || dst == src || !src->fbo) {
+	if (!SmoothsEffects() || g_Config.iEffectsOpacity <= 0 || !dst || dst == src || !src->fbo) {
 		return false;
 	}
 	return src->renderScaleFactor == 1 && dst->renderScaleFactor > 1 && IsEffectBuffer(src) && !MayBeEffectBuffer(dst);
@@ -2716,6 +2832,10 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 	case BLOOMHACK_AUTO:
 	case BLOOMHACK_AUTO_SMOOTH:
 		force1x = IsEffectBuffer(vfb);
+		break;
+	case BLOOMHACK_AUTO_CEL:
+		// Outlines stay at full resolution, as sharp as the models (see DrawCelOutline).
+		force1x = IsEffectBuffer(vfb) && !IsFilterBuffer(vfb);
 		break;
 	}
 
@@ -3891,6 +4011,7 @@ void FramebufferManagerCommon::DestroyAllFBOs() {
 	effectSourceCopy_ = nullptr;
 	filterSourceVfb_ = nullptr;
 	filterSourceCopy_ = nullptr;
+	celSourceVfb_ = nullptr;
 	// Or a new framebuffer at the same address would skip its depth shift.
 	depthShiftedFor_ = 0;
 	lastRenderAddress_ = 0;
@@ -4603,6 +4724,12 @@ void FramebufferManagerCommon::ReleasePipelines() {
 	DoRelease(draw2DPipelineCopyColorMin_);
 	DoRelease(draw2DPipelineCopyScaleRGB_);
 	DoRelease(draw2DPipelineCopyScaleAlpha_);
+	DoRelease(draw2DPipelineCelEdges_);
+	DoRelease(draw2DPipelineCelMinH_);
+	DoRelease(draw2DPipelineCelMinV_);
+	DoRelease(draw2DPipelineCelMinD_);
+	DoRelease(draw2DPipelineCelOutline_);
+	DoRelease(draw2DPipelineCopyColorMultiply_);
 }
 
 void FramebufferManagerCommon::DeviceLost() {

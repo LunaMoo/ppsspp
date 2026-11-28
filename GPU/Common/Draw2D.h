@@ -27,6 +27,13 @@ enum Draw2DShader {
 	DRAW2D_COPY_COLOR_MIN,  // The lower of the source and destination color. Needs blendMinMaxSupported.
 	DRAW2D_COPY_SCALE_RGB,  // Copies with the color multiplied by the scale factor / 100.
 	DRAW2D_COPY_SCALE_ALPHA,  // Copies with the alpha multiplied by the scale factor / 100.
+	// Auto (cel-shading)'s outline (see FramebufferManagerCommon::DrawCelOutline), in five passes and a multiply.
+	DRAW2D_CEL_EDGES,
+	DRAW2D_CEL_MIN_H,
+	DRAW2D_CEL_MIN_V,
+	DRAW2D_CEL_MIN_D,
+	DRAW2D_CEL_OUTLINE,
+	DRAW2D_COPY_COLOR_MULTIPLY,  // Multiplies the destination's color by the source's, faded toward white by 100 - the scale factor (%).
 };
 
 inline RasterChannel Draw2DSourceChannel(Draw2DShader shader) {
@@ -50,6 +57,7 @@ struct Draw2DPipelineInfo {
 	bool readSamples = false;  // Binds the source with BindFramebufferSamplesAsTexture.
 	bool blend = false;  // Blends over the destination's color, by the alpha the shader outputs. Leaves its alpha.
 	bool blendMin = false;  // Keeps the lower of the source and destination color instead. Leaves the alpha.
+	bool blendMultiply = false;  // Multiplies the destination's color by the source's. Leaves the alpha.
 };
 
 extern const UniformDef g_draw2Duniforms[2];
@@ -81,6 +89,8 @@ public:
 
 	void Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX2, float srcY2, float dstX1, float dstY1, float dstX2, float dstY2, float srcWidth, float srcHeight, float dstWidth, float dstHeight, bool linear, int scaleFactor);
 	void Ensure2DResources();
+	// For pipelines that read more than one texture: Blit only sets the first's sampler.
+	Draw::SamplerState *NearestSampler() const { return draw2DSamplerNearest_; }
 
 private:
 	Draw::DrawContext *draw_;

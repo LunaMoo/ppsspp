@@ -208,6 +208,127 @@ Draw2DPipelineInfo GenerateDraw2DCopyScaleAlphaFs(ShaderWriter &writer) {
 	};
 }
 
+// Auto (cel-shading). The scene's depth is read as farness (0 near, 1 far) whichever way the game's depth test
+// goes: the scale factor's sign says which (positive where nearer is greater). Farness travels between the passes
+// in 16 bits of red and green, the line's darkness in blue; 1.0 in all of them is nothing.
+static const SamplerDef celSamplers[3] = {
+	{ 0, "tex", SamplerFlags::ARRAY_ON_VULKAN },
+	{ 1, "tex1", SamplerFlags::ARRAY_ON_VULKAN },
+	{ 2, "tex2", SamplerFlags::ARRAY_ON_VULKAN },
+};
+
+static void WriteCelEncode(ShaderWriter &writer, const char *farness, const char *darkness) {
+	writer.F("  float celCode = floor(clamp(%s, 0.0, 1.0) * 65535.0 + 0.5);\n", farness);
+	writer.C("  float celHi = floor(celCode / 256.0);\n");
+	writer.F("  vec4 outColor = vec4(celHi / 255.0, (celCode - celHi * 256.0) / 255.0, %s, 1.0);\n", darkness);
+}
+
+// A pixel at the edge of something in front: one of its four neighbors belongs to something else (another value in
+// the alpha, where DBZ Tenkaichi Tag Team keeps its characters' IDs) and is further away. Its darkness is the game's
+// own outline (tex, the factor it multiplies the scene by) around it, so only edges the game outlines get one.
+// tex1 is the scene's color, tex2 its depth. The scale factor is the render scale, with the depth's sign.
+Draw2DPipelineInfo GenerateDraw2DCelEdgesFs(ShaderWriter &writer) {
+	writer.HighPrecisionFloat();
+	writer.DeclareSamplers(celSamplers);
+	writer.BeginFSMain(g_draw2Duniforms, varyings);
+	writer.C("  vec2 px = vec2(1.0 / texSize.x, 1.0 / texSize.y);\n");
+	writer.C("  float s = abs(scaleFactor);\n");
+	writer.C("  float a = ").SampleTexture2D("tex1", "v_texcoord.xy").C(".a;\n");
+	writer.C("  float d = ").SampleTexture2D("tex2", "v_texcoord.xy").C(".x;\n");
+	writer.C("  if (scaleFactor > 0.0) { d = 1.0 - d; }\n");
+	writer.C("  bool front = false;\n");
+	const char *dirs[4] = { "vec2(1.0, 0.0)", "vec2(-1.0, 0.0)", "vec2(0.0, 1.0)", "vec2(0.0, -1.0)" };
+	for (const char *dir : dirs) {
+		char q[96];
+		snprintf(q, sizeof(q), "v_texcoord.xy + %s * px", dir);
+		writer.C("  {\n");
+		writer.C("    float an = ").SampleTexture2D("tex1", q).C(".a;\n");
+		writer.C("    float dn = ").SampleTexture2D("tex2", q).C(".x;\n");
+		writer.C("    if (scaleFactor > 0.0) { dn = 1.0 - dn; }\n");
+		writer.C("    if (abs(an - a) > 0.002 && dn > d + 0.0005) { front = true; }\n");
+		writer.C("  }\n");
+	}
+	// The game's line is a pixel or two wide (in PSP pixels), on either side of the edge.
+	writer.C("  float g = 1.0;\n");
+	writer.C("  for (int i = 0; i < 17; i++) {\n");
+	writer.C("    float ang = float(i) * 0.7854;\n");
+	writer.C("    vec2 o = i == 16 ? vec2(0.0, 0.0) : vec2(cos(ang), sin(ang)) * (i < 8 ? s : 2.0 * s);\n");
+	writer.C("    vec3 c = ").SampleTexture2D("tex", "v_texcoord.xy + o * px").C(".rgb;\n");
+	writer.C("    g = min(g, min(c.r, min(c.g, c.b)));\n");
+	writer.C("  }\n");
+	writer.C("  if (!front) { d = 1.0; g = 1.0; }\n");
+	WriteCelEncode(writer, "d", "g");
+	writer.EndFSMain("outColor");
+
+	Draw2DPipelineInfo info{ "draw2d_cel_edges", RASTER_COLOR, RASTER_COLOR, celSamplers };
+	return info;
+}
+
+// The nearest edge and darkest line within the scale factor's steps along a direction. Along x and y, then the two
+// diagonals, that's an octagon around each pixel.
+static void WriteCelMin(ShaderWriter &writer, const char *step) {
+	writer.C("  float r = min(abs(scaleFactor), 64.0);\n");
+	writer.F("  vec2 stepUV = %s / texSize;\n", step);
+	writer.C("  float fmin = 1.0;\n");
+	writer.C("  float gmin = 1.0;\n");
+	writer.C("  for (int i = 0; i < 129; i++) {\n");
+	writer.C("    float o = float(i) - r;\n");
+	writer.C("    if (o > r) { break; }\n");
+	writer.C("    vec4 c = ").SampleTexture2D("tex", "v_texcoord.xy + stepUV * o").C(";\n");
+	writer.C("    fmin = min(fmin, (floor(c.r * 255.0 + 0.5) * 256.0 + floor(c.g * 255.0 + 0.5)) / 65535.0);\n");
+	writer.C("    gmin = min(gmin, c.b);\n");
+	writer.C("  }\n");
+}
+
+static const char *const celSteps[4] = { "vec2(1.0, 0.0)", "vec2(0.0, 1.0)", "vec2(1.0, 1.0)", "vec2(1.0, -1.0)" };
+
+static Draw2DPipelineInfo GenerateDraw2DCelMinFs(ShaderWriter &writer, int dir, const char *tag) {
+	writer.HighPrecisionFloat();
+	writer.DeclareSamplers(samplers);
+	writer.BeginFSMain(g_draw2Duniforms, varyings);
+	WriteCelMin(writer, celSteps[dir]);
+	WriteCelEncode(writer, "fmin", "gmin");
+	writer.EndFSMain("outColor");
+	return Draw2DPipelineInfo{ tag, RASTER_COLOR, RASTER_COLOR };
+}
+
+Draw2DPipelineInfo GenerateDraw2DCelMinHFs(ShaderWriter &writer) {
+	return GenerateDraw2DCelMinFs(writer, 0, "draw2d_cel_min_h");
+}
+Draw2DPipelineInfo GenerateDraw2DCelMinVFs(ShaderWriter &writer) {
+	return GenerateDraw2DCelMinFs(writer, 1, "draw2d_cel_min_v");
+}
+Draw2DPipelineInfo GenerateDraw2DCelMinDFs(ShaderWriter &writer) {
+	return GenerateDraw2DCelMinFs(writer, 2, "draw2d_cel_min_d");
+}
+
+// The line: where there's an edge of something nearer within reach, and this pixel is further than that (so it's
+// outside it, never on it). Where the PSP's taps overlap, the line is about its darkness cubed. tex1 is the scene's
+// depth.
+Draw2DPipelineInfo GenerateDraw2DCelOutlineFs(ShaderWriter &writer) {
+	writer.HighPrecisionFloat();
+	writer.DeclareSamplers(celSamplers);
+	writer.BeginFSMain(g_draw2Duniforms, varyings);
+	WriteCelMin(writer, celSteps[3]);
+	writer.C("  float d = ").SampleTexture2D("tex1", "v_texcoord.xy").C(".x;\n");
+	writer.C("  if (scaleFactor > 0.0) { d = 1.0 - d; }\n");
+	writer.C("  float line = d > fmin + 0.0005 ? gmin * gmin * gmin : 1.0;\n");
+	writer.C("  vec4 outColor = vec4(line, line, line, 1.0);\n");
+	writer.EndFSMain("outColor");
+	return Draw2DPipelineInfo{ "draw2d_cel_outline", RASTER_COLOR, RASTER_COLOR, celSamplers };
+}
+
+Draw2DPipelineInfo GenerateDraw2DCopyColorMultiplyFs(ShaderWriter &writer) {
+	writer.DeclareSamplers(samplers);
+	writer.BeginFSMain(g_draw2Duniforms, varyings);
+	writer.C("  vec3 c = ").SampleTexture2D("tex", "v_texcoord.xy").C(".rgb;\n");
+	writer.C("  vec4 outColor = vec4(mix(vec3(1.0, 1.0, 1.0), c, scaleFactor / 100.0), 1.0);\n");
+	writer.EndFSMain("outColor");
+	Draw2DPipelineInfo info{ "draw2d_copy_color_multiply", RASTER_COLOR, RASTER_COLOR };
+	info.blendMultiply = true;
+	return info;
+}
+
 Draw2DPipelineInfo GenerateDraw2DCopyDepthFs(ShaderWriter &writer) {
 	writer.SetFlags(ShaderWriterFlags::FS_WRITE_DEPTH);
 	writer.DeclareSamplers(samplers);
@@ -386,6 +507,8 @@ Draw2DPipeline *Draw2D::Create2DPipeline(std::function<Draw2DPipelineInfo (Shade
 	BlendState *blend;
 	if (info.blendMin) {
 		blend = draw_->CreateBlendState({ true, 0x7, Draw::BlendFactor::ONE, Draw::BlendFactor::ONE, Draw::BlendOp::MIN, Draw::BlendFactor::ONE, Draw::BlendFactor::ZERO, Draw::BlendOp::ADD });
+	} else if (info.blendMultiply) {
+		blend = draw_->CreateBlendState({ true, 0x7, Draw::BlendFactor::DST_COLOR, Draw::BlendFactor::ZERO, Draw::BlendOp::ADD, Draw::BlendFactor::ONE, Draw::BlendFactor::ZERO, Draw::BlendOp::ADD });
 	} else if (info.blend) {
 		blend = draw_->CreateBlendState({ true, 0x7, Draw::BlendFactor::SRC_ALPHA, Draw::BlendFactor::ONE_MINUS_SRC_ALPHA, Draw::BlendOp::ADD, Draw::BlendFactor::ONE, Draw::BlendFactor::ZERO, Draw::BlendOp::ADD });
 	} else {
@@ -539,6 +662,42 @@ Draw2DPipeline *FramebufferManagerCommon::Get2DPipeline(Draw2DShader shader) {
 			draw2DPipelineCopyScaleAlpha_ = draw2D_.Create2DPipeline(&GenerateDraw2DCopyScaleAlphaFs);
 		}
 		pipeline = draw2DPipelineCopyScaleAlpha_;
+		break;
+	case DRAW2D_CEL_EDGES:
+		if (!draw2DPipelineCelEdges_) {
+			draw2DPipelineCelEdges_ = draw2D_.Create2DPipeline(&GenerateDraw2DCelEdgesFs);
+		}
+		pipeline = draw2DPipelineCelEdges_;
+		break;
+	case DRAW2D_CEL_MIN_H:
+		if (!draw2DPipelineCelMinH_) {
+			draw2DPipelineCelMinH_ = draw2D_.Create2DPipeline(&GenerateDraw2DCelMinHFs);
+		}
+		pipeline = draw2DPipelineCelMinH_;
+		break;
+	case DRAW2D_CEL_MIN_V:
+		if (!draw2DPipelineCelMinV_) {
+			draw2DPipelineCelMinV_ = draw2D_.Create2DPipeline(&GenerateDraw2DCelMinVFs);
+		}
+		pipeline = draw2DPipelineCelMinV_;
+		break;
+	case DRAW2D_CEL_MIN_D:
+		if (!draw2DPipelineCelMinD_) {
+			draw2DPipelineCelMinD_ = draw2D_.Create2DPipeline(&GenerateDraw2DCelMinDFs);
+		}
+		pipeline = draw2DPipelineCelMinD_;
+		break;
+	case DRAW2D_CEL_OUTLINE:
+		if (!draw2DPipelineCelOutline_) {
+			draw2DPipelineCelOutline_ = draw2D_.Create2DPipeline(&GenerateDraw2DCelOutlineFs);
+		}
+		pipeline = draw2DPipelineCelOutline_;
+		break;
+	case DRAW2D_COPY_COLOR_MULTIPLY:
+		if (!draw2DPipelineCopyColorMultiply_) {
+			draw2DPipelineCopyColorMultiply_ = draw2D_.Create2DPipeline(&GenerateDraw2DCopyColorMultiplyFs);
+		}
+		pipeline = draw2DPipelineCopyColorMultiply_;
 		break;
 	case DRAW2D_GAUSSIAN_H:
 		if (!draw2DPipelineGaussianH_) {

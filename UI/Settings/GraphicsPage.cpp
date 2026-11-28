@@ -324,16 +324,16 @@ void BuildGraphicsSettings(SettingsPage *page) {
 
 	page->Header();
 	page->Setting(&g_Config.iBloomHack).Disabled(&g_Config.bSoftwareRendering).Hint({I18NCat::GRAPHICS, "ReducesBloomArtifactsHint", "Reduces artifacts in visual effects like blooms at higher resolutions."});
-	// Only for Auto (smooth), BLOOMHACK_AUTO_SMOOTH.
+	// Only for Auto (smooth) and Auto (cel-shading), BLOOMHACK_AUTO_SMOOTH and BLOOMHACK_AUTO_CEL.
 	page->Setting(&g_Config.iEffectsSpread).EnabledFunc([] {
-		return !g_Config.bSoftwareRendering && g_Config.iBloomHack == 5;
-	});
+		return !g_Config.bSoftwareRendering && (g_Config.iBloomHack == 5 || g_Config.iBloomHack == 6);
+	}).Hint({I18NCat::GRAPHICS, "EffectsSpreadHint", "How far glows spread. With Auto (cel-shading), also how wide outlines are."});
 	page->Setting(&g_Config.iEffectsOpacity).EnabledFunc([] {
-		return !g_Config.bSoftwareRendering && g_Config.iBloomHack == 5;
+		return !g_Config.bSoftwareRendering && (g_Config.iBloomHack == 5 || g_Config.iBloomHack == 6);
 	});
-	// Both Auto levels, BLOOMHACK_AUTO and BLOOMHACK_AUTO_SMOOTH.
+	// All Auto levels, from BLOOMHACK_AUTO.
 	page->Setting(&g_Config.bEffects16BitColor).EnabledFunc([] {
-		return !g_Config.bSoftwareRendering && (g_Config.iBloomHack == 4 || g_Config.iBloomHack == 5);
+		return !g_Config.bSoftwareRendering && g_Config.iBloomHack >= 4;
 	}).Hint({I18NCat::GRAPHICS, "Effects16BitColorHint", "Rounds effects drawn in 16-bit color like the PSP does. Closer to its colors, with some banding."});
 	page->Setting(&g_Config.iRound16BitColor).Disabled(&g_Config.bSoftwareRendering).Hint({I18NCat::GRAPHICS, "Round16BitColorHint", "Games drawing in 16-bit color look less washed out. Accurate rounds colors like the PSP, dithered where the game dithers. Smooth comes close without any banding."});
 	// With framebuffer fetch, translucent draws always blend exactly, so the option does nothing.
